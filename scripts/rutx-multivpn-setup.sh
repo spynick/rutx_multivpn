@@ -27,8 +27,9 @@ PROTECTED_PATTERNS="WG MGMT HOME VPN wg mgmt home vpn"
 # Unser Prefix fuer Streaming Tunnel
 TUNNEL_PREFIX="SS"
 
-# Streaming Devices (wird vom Provisioning ueberschrieben)
-STREAMING_DEVICES="192.168.110.100"
+# Streaming Devices (wird vom Provisioning gesetzt)
+# Leer lassen - muss ueber Config oder Provisioning gesetzt werden
+STREAMING_DEVICES="${STREAMING_DEVICES:-}"
 
 # Basis fuer Routing Tabellen und Marks (werden dynamisch vergeben)
 RT_TABLE_BASE=110
@@ -38,6 +39,11 @@ MARK_BASE=16  # 0x10 = 16 dezimal
 SCRIPT_DIR="/root/multivpn"
 CONFIG_FILE="$SCRIPT_DIR/config"
 DOMAIN_DIR="$SCRIPT_DIR/domains"
+
+# Config laden falls vorhanden (wird von Provisioning erstellt)
+if [ -f "$CONFIG_FILE" ]; then
+    . "$CONFIG_FILE"
+fi
 
 # =============================================================================
 # FUNKTIONEN
@@ -82,7 +88,8 @@ is_our_tunnel() {
 get_country_from_iface() {
     local iface="$1"
     # Entferne SS_ prefix und trailing Ziffern
-    echo "$iface" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr '[:upper:]' '[:lower:]'
+    # BusyBox tr braucht A-Z statt [:upper:]
+    echo "$iface" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr 'A-Z' 'a-z'
 }
 
 # =============================================================================
@@ -109,16 +116,33 @@ fi
 log "Pruefe dnsmasq ipset Support..."
 
 # Pruefen ob dnsmasq ipset unterstuetzt (--version zeigt compile options)
-if dnsmasq --version 2>&1 | grep -q "no-ipset"; then
+# Zuerst pruefen ob dnsmasq-full bereits installiert ist
+DNSMASQ_BIN="/usr/sbin/dnsmasq"
+if [ -f /usr/local/usr/sbin/dnsmasq ]; then
+    DNSMASQ_BIN="/usr/local/usr/sbin/dnsmasq"
+fi
+
+if $DNSMASQ_BIN --version 2>&1 | grep -q "no-ipset"; then
     log "  dnsmasq hat KEINEN ipset Support, installiere dnsmasq-full..."
 
-    # Backup der aktuellen dnsmasq config
+    # Backup der aktuellen dnsmasq config UND init.d script
     cp /etc/config/dhcp /etc/config/dhcp.backup 2>/dev/null || true
+    cp /etc/init.d/dnsmasq /etc/init.d/dnsmasq.backup 2>/dev/null || true
 
     # OpenWRT Repo hinzufuegen falls nicht vorhanden
+    # Architektur automatisch erkennen (hoechste Prioritaet = letzte Zeile ohne all/noarch)
+    ARCH=$(opkg print-architecture | grep -v "all" | grep -v "noarch" | tail -1 | awk '{print $2}')
+    if [ -z "$ARCH" ]; then
+        # Fallback: aus openwrt_release lesen
+        ARCH=$(grep "DISTRIB_ARCH" /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)
+    fi
+    if [ -z "$ARCH" ]; then
+        error "Konnte Architektur nicht erkennen!"
+    fi
+
     if ! grep -q "openwrt_base" /etc/opkg/customfeeds.conf 2>/dev/null; then
-        log "  Fuege OpenWRT Repository hinzu..."
-        echo "src/gz openwrt_base https://downloads.openwrt.org/releases/21.02.0/packages/arm_cortex-a7_neon-vfpv4/base" >> /etc/opkg/customfeeds.conf
+        log "  Fuege OpenWRT Repository hinzu (Arch: $ARCH)..."
+        echo "src/gz openwrt_base https://downloads.openwrt.org/releases/21.02.0/packages/${ARCH}/base" >> /etc/opkg/customfeeds.conf
     fi
 
     # Paketlisten aktualisieren
@@ -128,24 +152,59 @@ if dnsmasq --version 2>&1 | grep -q "no-ipset"; then
     # dnsmasq entfernen und dnsmasq-full installieren
     log "  Ersetze dnsmasq durch dnsmasq-full..."
     opkg remove dnsmasq --force-depends
-    opkg install dnsmasq-full
 
-    # Restore config
+    if ! opkg install dnsmasq-full; then
+        error "dnsmasq-full Installation fehlgeschlagen! Restore backup..."
+        cp /etc/init.d/dnsmasq.backup /etc/init.d/dnsmasq 2>/dev/null || true
+        cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
+        exit 1
+    fi
+
+    # Restore config (aber NICHT init.d - das wird separat gepatcht)
     cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
 
     log "  dnsmasq-full installiert"
+else
+    log "  dnsmasq hat bereits ipset Support"
 fi
 
 # dnsmasq init.d patchen (Teltonika nutzt anderen Pfad fuer OpenWRT packages)
 # Muss NACH Installation UND bei jedem Setup geprueft werden
 if [ -f /usr/local/usr/sbin/dnsmasq ]; then
+    # libubox Symlink erstellen falls noetig (neuere Teltonika Firmware hat andere Version)
+    # /lib ist read-only, also /usr/local/lib verwenden
+    # Ermittle welche Version dnsmasq braucht und welche vorhanden ist
+    LIBUBOX_NEEDED=$(ldd /usr/local/usr/sbin/dnsmasq 2>/dev/null | grep libubox | sed 's/.*libubox\.so\.\([0-9]*\).*/\1/' | head -1)
+    LIBUBOX_CURRENT=$(ls /lib/libubox.so.* 2>/dev/null | head -1)
+
+    if [ -n "$LIBUBOX_NEEDED" ] && [ -n "$LIBUBOX_CURRENT" ]; then
+        if [ ! -f /usr/local/lib/libubox.so.${LIBUBOX_NEEDED} ]; then
+            mkdir -p /usr/local/lib
+            ln -sf "$LIBUBOX_CURRENT" /usr/local/lib/libubox.so.${LIBUBOX_NEEDED}
+            log "  libubox Symlink erstellt: $LIBUBOX_CURRENT -> libubox.so.${LIBUBOX_NEEDED}"
+        fi
+    fi
+
+    # LD_LIBRARY_PATH fuer dnsmasq setzen
+    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
     # Pruefen ob das Binary ipset Support hat
     if /usr/local/usr/sbin/dnsmasq --version 2>&1 | grep -q " ipset"; then
         if ! grep -q "/usr/local/usr/sbin/dnsmasq" /etc/init.d/dnsmasq 2>/dev/null; then
             log "  Patche /etc/init.d/dnsmasq fuer dnsmasq-full Pfad..."
+            # Backup vor dem Patchen
+            cp /etc/init.d/dnsmasq /etc/init.d/dnsmasq.pre-patch 2>/dev/null || true
             sed -i 's|PROG=/usr/sbin/dnsmasq|PROG=/usr/local/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
+
+            # LD_LIBRARY_PATH in init.d einfuegen falls nicht vorhanden
+            if ! grep -q "LD_LIBRARY_PATH" /etc/init.d/dnsmasq 2>/dev/null; then
+                sed -i '/^PROG=/a export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' /etc/init.d/dnsmasq
+                log "  LD_LIBRARY_PATH in init.d eingefuegt"
+            fi
+
             # Flag fuer Reboot am Ende setzen
             touch /tmp/.multivpn_needs_reboot
+            log "  init.d gepatcht - Reboot erforderlich"
         fi
     fi
 fi
@@ -266,11 +325,17 @@ MARK_BASE=16
 
 # Lade Config
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
-STREAMING_DEVICES="${STREAMING_DEVICES:-192.168.110.100}"
+
+# STREAMING_DEVICES muss gesetzt sein, sonst Warnung
+if [ -z "$STREAMING_DEVICES" ]; then
+    echo "WARNUNG: Keine STREAMING_DEVICES konfiguriert!"
+    echo "Setze mit: /root/multivpn/manage-devices.sh set <IP>"
+fi
 
 # Extrahiert Laendercode aus Interface Name: SS_DE -> de, SS_DE2 -> de
 get_country_from_iface() {
-    echo "$1" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr '[:upper:]' '[:lower:]'
+    # BusyBox tr braucht A-Z statt [:upper:]
+    echo "$1" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr 'A-Z' 'a-z'
 }
 
 # Finde alle SS_* Interfaces
@@ -402,7 +467,7 @@ case "$1" in
         tunnels_json="{"
         first=1
         for iface in $(get_our_interfaces); do
-            country=$(get_country_from_iface "$iface" | tr '[:lower:]' '[:upper:]')
+            country=$(get_country_from_iface "$iface" | tr 'a-z' 'A-Z')
             up="false"
             wg show "$iface" >/dev/null 2>&1 && up="true"
 

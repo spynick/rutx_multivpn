@@ -146,7 +146,8 @@ log "  WireGuard Interfaces bereinigt"
 
 log "[3/9] Entferne ipsets..."
 
-for ipset_name in de_ips ch_ips at_ips; do
+# Beide Varianten: lowercase (neu) und uppercase (alt)
+for ipset_name in de_ips ch_ips at_ips DE_ips CH_ips AT_ips; do
     if ipset list "$ipset_name" >/dev/null 2>&1; then
         ipset destroy "$ipset_name" 2>/dev/null || true
         log "  ipset $ipset_name entfernt"

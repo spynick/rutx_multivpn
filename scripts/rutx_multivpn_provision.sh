@@ -36,8 +36,10 @@ RUTX_USER="${RUTX_USER:-root}"
 # RUTX Host in Datei speichern (fuer command_line sensor)
 echo "$RUTX_HOST" > /config/.rutx_multivpn_host
 
-# Streaming Devices
-STREAMING_DEVICES="${STREAMING_DEVICES:-192.168.110.100}"
+# Streaming Devices (muss als Umgebungsvariable gesetzt werden!)
+if [ -z "$STREAMING_DEVICES" ]; then
+    error "STREAMING_DEVICES nicht gesetzt! Beispiel: STREAMING_DEVICES=192.168.1.100"
+fi
 
 # SSH Optionen
 SSH_KEY="${SSH_KEY:-/config/.ssh/id_rsa}"
@@ -218,12 +220,12 @@ fi
 
 log "=== Schritt 4: Setup Script hochladen und ausfuehren ==="
 
-# Setup Script anpassen (Streaming Devices)
-TEMP_SETUP=$(mktemp)
-sed "s/STREAMING_DEVICES=\".*\"/STREAMING_DEVICES=\"$STREAMING_DEVICES\"/" "$SETUP_SCRIPT" > "$TEMP_SETUP"
+# Setup Script hochladen
+scp_file "$SETUP_SCRIPT" "/root/multivpn/setup.sh"
 
-scp_file "$TEMP_SETUP" "/root/multivpn/setup.sh"
-rm -f "$TEMP_SETUP"
+# Config mit Streaming Devices erstellen
+ssh_cmd "echo 'STREAMING_DEVICES=\"$STREAMING_DEVICES\"' > /root/multivpn/config"
+log "Config mit STREAMING_DEVICES=$STREAMING_DEVICES erstellt"
 
 log "Fuehre Setup Script aus..."
 ssh_cmd "chmod +x /root/multivpn/setup.sh && sh /root/multivpn/setup.sh"
