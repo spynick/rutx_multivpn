@@ -108,8 +108,8 @@ fi
 
 log "Pruefe dnsmasq ipset Support..."
 
-# Pruefen ob dnsmasq ipset unterstuetzt
-if dnsmasq --help 2>&1 | grep -q "no-ipset"; then
+# Pruefen ob dnsmasq ipset unterstuetzt (--version zeigt compile options)
+if dnsmasq --version 2>&1 | grep -q "no-ipset"; then
     log "  dnsmasq hat KEINEN ipset Support, installiere dnsmasq-full..."
 
     # Backup der aktuellen dnsmasq config
@@ -130,21 +130,24 @@ if dnsmasq --help 2>&1 | grep -q "no-ipset"; then
     opkg remove dnsmasq --force-depends
     opkg install dnsmasq-full
 
-    # dnsmasq init.d patchen (Teltonika nutzt anderen Pfad)
-    if [ -f /usr/local/usr/sbin/dnsmasq ]; then
-        log "  Patche /etc/init.d/dnsmasq fuer dnsmasq-full Pfad..."
-        sed -i 's|PROG=/usr/sbin/dnsmasq|PROG=/usr/local/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
-    fi
-
     # Restore config
     cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
 
-    # Flag fuer Reboot am Ende setzen
-    touch /tmp/.multivpn_needs_reboot
-
     log "  dnsmasq-full installiert"
-else
-    log "  dnsmasq hat bereits ipset Support"
+fi
+
+# dnsmasq init.d patchen (Teltonika nutzt anderen Pfad fuer OpenWRT packages)
+# Muss NACH Installation UND bei jedem Setup geprueft werden
+if [ -f /usr/local/usr/sbin/dnsmasq ]; then
+    # Pruefen ob das Binary ipset Support hat
+    if /usr/local/usr/sbin/dnsmasq --version 2>&1 | grep -q " ipset"; then
+        if ! grep -q "/usr/local/usr/sbin/dnsmasq" /etc/init.d/dnsmasq 2>/dev/null; then
+            log "  Patche /etc/init.d/dnsmasq fuer dnsmasq-full Pfad..."
+            sed -i 's|PROG=/usr/sbin/dnsmasq|PROG=/usr/local/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
+            # Flag fuer Reboot am Ende setzen
+            touch /tmp/.multivpn_needs_reboot
+        fi
+    fi
 fi
 
 # =============================================================================
@@ -275,31 +278,33 @@ get_our_interfaces() {
     uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | grep "^${TUNNEL_PREFIX}_" | sort -u
 }
 
-# Berechne Table/Mark fuer ein Land (basierend auf alphabetischer Reihenfolge)
-get_table_for_country() {
-    local country="$1"
-    local idx=0
-    for c in $(get_our_interfaces | while read iface; do get_country_from_iface "$iface"; done | sort -u); do
-        if [ "$c" = "$country" ]; then
-            echo $((RT_TABLE_BASE + idx))
-            return
-        fi
-        idx=$((idx + 1))
-    done
-    echo $RT_TABLE_BASE
+# Hole alle Laender (einfache Version ohne Pipe-Probleme)
+get_all_countries() {
+    for iface in $(get_our_interfaces); do
+        get_country_from_iface "$iface"
+    done | sort -u
 }
 
+# Berechne Table fuer ein Land
+get_table_for_country() {
+    local country="$1"
+    case "$country" in
+        at) echo $((RT_TABLE_BASE + 0)) ;;
+        ch) echo $((RT_TABLE_BASE + 1)) ;;
+        de) echo $((RT_TABLE_BASE + 2)) ;;
+        *)  echo $RT_TABLE_BASE ;;
+    esac
+}
+
+# Berechne Mark fuer ein Land
 get_mark_for_country() {
     local country="$1"
-    local idx=0
-    for c in $(get_our_interfaces | while read iface; do get_country_from_iface "$iface"; done | sort -u); do
-        if [ "$c" = "$country" ]; then
-            printf "0x%x" $((MARK_BASE + idx))
-            return
-        fi
-        idx=$((idx + 1))
-    done
-    printf "0x%x" $MARK_BASE
+    case "$country" in
+        at) printf "0x%x" $((MARK_BASE + 0)) ;;
+        ch) printf "0x%x" $((MARK_BASE + 1)) ;;
+        de) printf "0x%x" $((MARK_BASE + 2)) ;;
+        *)  printf "0x%x" $MARK_BASE ;;
+    esac
 }
 
 case "$1" in
@@ -307,13 +312,7 @@ case "$1" in
         echo "Aktiviere Multi-VPN Routing..."
 
         # Sammle alle Laender
-        countries=""
-        for iface in $(get_our_interfaces); do
-            country=$(get_country_from_iface "$iface")
-            if ! echo "$countries" | grep -q "$country"; then
-                countries="$countries $country"
-            fi
-        done
+        countries=$(get_all_countries)
 
         # IP Rules aufsetzen
         for country in $countries; do
@@ -370,13 +369,7 @@ case "$1" in
         echo "Deaktiviere Multi-VPN Routing..."
 
         # Sammle alle Laender
-        countries=""
-        for iface in $(get_our_interfaces); do
-            country=$(get_country_from_iface "$iface")
-            if ! echo "$countries" | grep -q "$country"; then
-                countries="$countries $country"
-            fi
-        done
+        countries=$(get_all_countries)
 
         # iptables Regeln entfernen
         for IP in $STREAMING_DEVICES; do
