@@ -1,0 +1,45 @@
+# Deutsche Streaming Dienste
+# Format: Eine Domain pro Zeile
+# Wird von dnsmasq genutzt um IPs in ipset "german_ips" zu fuellen
+
+# ARD Mediathek + Infrastruktur
+ardmediathek.de
+mediathek.daserste.de
+daserste.de
+ard.de
+ardaudiothek.de
+
+# ZDF Mediathek
+zdf.de
+zdfmediathek.de
+
+# ARD Landesrundfunkanstalten
+br.de
+hr.de
+wdr.de
+ndr.de
+swr.de
+mdr.de
+rbb-online.de
+radiobremen.de
+sr.de
+
+# Arte
+arte.tv
+arte.de
+
+# RTL+ (falls benoetigt)
+rtlplus.de
+rtl.de
+tvnow.de
+
+# Joyn
+joyn.de
+
+# ProSieben/Sat1
+prosieben.de
+sat1.de
+kabeleins.de
+
+# Sport
+sportschau.de

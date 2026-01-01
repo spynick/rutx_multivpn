@@ -1,0 +1,285 @@
+# =============================================================================
+# RUTX Multi-VPN Routing - Home Assistant Package
+# =============================================================================
+#
+# DNS-basiertes Split-Tunneling fuer Streaming:
+#   - ARD/ZDF -> Deutschland Tunnel (SS_DE)
+#   - SRF/Play Suisse -> Schweiz Tunnel (SS_CH)
+#   - ORF/ServusTV -> Oesterreich Tunnel (SS_AT)
+#
+# NUR Streaming Devices werden geroutet!
+# Alle anderen Geraete gehen normal ins Internet.
+#
+# WICHTIG: Management VPN (WG/MGMT/HOME/VPN) wird NIEMALS angefasst!
+#
+# Installation:
+#   1. Dieses Package nach /config/packages/rutx_multivpn/ kopieren
+#   2. WireGuard Configs in /config/packages/rutx_multivpn/profiles/
+#      Namenskonvention: wg_<LAND>_<provider>.conf
+#   3. In configuration.yaml: homeassistant: packages: !include_dir_named packages
+#   4. HA neu starten
+#   5. SSH Key einrichten (falls nicht schon geschehen)
+#   6. "Multi-VPN Setup" Button druecken
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Input Helpers
+# -----------------------------------------------------------------------------
+
+input_text:
+  rutx_multivpn_streaming_devices:
+    name: "Multi-VPN Streaming Devices"
+    icon: mdi:television
+    initial: "192.168.110.100"
+
+  rutx_multivpn_host:
+    name: "Multi-VPN RUTX IP"
+    icon: mdi:router-wireless
+    initial: "192.168.110.1"
+
+input_boolean:
+  rutx_multivpn_enabled:
+    name: "Multi-VPN Aktiviert"
+    icon: mdi:vpn
+
+# -----------------------------------------------------------------------------
+# Shell Commands
+# -----------------------------------------------------------------------------
+
+shell_command:
+  rutx_multivpn_on: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh on'
+
+  rutx_multivpn_off: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh off'
+
+  rutx_multivpn_status: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh status'
+
+  rutx_multivpn_cleanup: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh cleanup'
+
+  rutx_multivpn_devices: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh devices {{ devices }}'
+
+  rutx_multivpn_provision: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh provision {{ states("input_text.rutx_multivpn_host") }} {{ states("input_text.rutx_multivpn_streaming_devices") }}'
+
+  rutx_multivpn_check: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh check'
+
+# -----------------------------------------------------------------------------
+# Sensors
+# -----------------------------------------------------------------------------
+
+command_line:
+  - sensor:
+      name: "RUTX Multi-VPN Status Raw"
+      unique_id: rutx_multivpn_status_raw
+      command: '/config/packages/rutx_multivpn/scripts/rutx_multivpn_cmd.sh status 2>/dev/null || echo ''{"active":false,"tunnels":{"DE":false,"CH":false,"AT":false},"streaming_devices":"","ipset_counts":{"de":0,"ch":0,"at":0}}'''
+      scan_interval: 30
+      value_template: "{{ value }}"
+
+template:
+  - sensor:
+      - name: "RUTX Multi-VPN Aktiv"
+        unique_id: rutx_multivpn_active
+        icon: mdi:vpn
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.active | default(false) }}
+
+      - name: "RUTX Multi-VPN Tunnel DE"
+        unique_id: rutx_multivpn_tunnel_de
+        icon: mdi:tunnel
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.tunnels.DE | default(false) }}
+
+      - name: "RUTX Multi-VPN Tunnel CH"
+        unique_id: rutx_multivpn_tunnel_ch
+        icon: mdi:tunnel
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.tunnels.CH | default(false) }}
+
+      - name: "RUTX Multi-VPN Tunnel AT"
+        unique_id: rutx_multivpn_tunnel_at
+        icon: mdi:tunnel
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.tunnels.AT | default(false) }}
+
+      - name: "RUTX Multi-VPN Streaming Devices"
+        unique_id: rutx_multivpn_devices
+        icon: mdi:devices
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.streaming_devices | default('') }}
+
+      - name: "RUTX Multi-VPN DE IPs"
+        unique_id: rutx_multivpn_ipset_de
+        icon: mdi:ip-network
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.ipset_counts.de | default(0) }}
+
+      - name: "RUTX Multi-VPN CH IPs"
+        unique_id: rutx_multivpn_ipset_ch
+        icon: mdi:ip-network
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.ipset_counts.ch | default(0) }}
+
+      - name: "RUTX Multi-VPN AT IPs"
+        unique_id: rutx_multivpn_ipset_at
+        icon: mdi:ip-network
+        state: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {{ data.ipset_counts.at | default(0) }}
+
+# -----------------------------------------------------------------------------
+# Scripts
+# -----------------------------------------------------------------------------
+
+script:
+  rutx_multivpn_activate:
+    alias: "Multi-VPN aktivieren"
+    description: "Aktiviert DNS-basiertes Multi-VPN Routing"
+    sequence:
+      - service: shell_command.rutx_multivpn_on
+      - delay:
+          seconds: 5
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.rutx_multi_vpn_status_raw
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.rutx_multivpn_enabled
+
+  rutx_multivpn_deactivate:
+    alias: "Multi-VPN deaktivieren"
+    description: "Deaktiviert Multi-VPN Routing"
+    sequence:
+      - service: shell_command.rutx_multivpn_off
+      - delay:
+          seconds: 3
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.rutx_multi_vpn_status_raw
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.rutx_multivpn_enabled
+
+  rutx_multivpn_provision:
+    alias: "Multi-VPN Setup"
+    description: "Richtet Multi-VPN auf dem RUTX ein (Initial-Setup)"
+    sequence:
+      - service: shell_command.rutx_multivpn_provision
+      - delay:
+          seconds: 30
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.rutx_multi_vpn_status_raw
+
+  rutx_multivpn_cleanup:
+    alias: "Multi-VPN Cleanup"
+    description: "Entfernt Multi-VPN Konfiguration vom RUTX (Management VPN bleibt!)"
+    sequence:
+      - service: shell_command.rutx_multivpn_cleanup
+      - delay:
+          seconds: 10
+      - service: homeassistant.update_entity
+        target:
+          entity_id: sensor.rutx_multi_vpn_status_raw
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.rutx_multivpn_enabled
+
+  rutx_multivpn_update_devices:
+    alias: "Multi-VPN Devices aktualisieren"
+    sequence:
+      - service: shell_command.rutx_multivpn_devices
+        data:
+          devices: "{{ states('input_text.rutx_multivpn_streaming_devices') }}"
+
+# -----------------------------------------------------------------------------
+# Automations
+# -----------------------------------------------------------------------------
+
+automation:
+  - id: rutx_multivpn_toggle
+    alias: "Multi-VPN - Ein/Aus Toggle"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.rutx_multivpn_enabled
+    action:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.rutx_multivpn_enabled
+                state: "on"
+            sequence:
+              - service: script.rutx_multivpn_activate
+          - conditions:
+              - condition: state
+                entity_id: input_boolean.rutx_multivpn_enabled
+                state: "off"
+            sequence:
+              - service: script.rutx_multivpn_deactivate
+
+  - id: rutx_multivpn_sync_state
+    alias: "Multi-VPN - Status synchronisieren"
+    trigger:
+      - platform: state
+        entity_id: sensor.rutx_multi_vpn_aktiv
+    condition:
+      - condition: template
+        value_template: "{{ trigger.to_state.state not in ['unknown', 'unavailable'] }}"
+    action:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'True' }}"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.rutx_multivpn_enabled
+          - conditions:
+              - condition: template
+                value_template: "{{ trigger.to_state.state == 'False' }}"
+            sequence:
+              - service: input_boolean.turn_off
+                target:
+                  entity_id: input_boolean.rutx_multivpn_enabled
+
+# -----------------------------------------------------------------------------
+# Buttons fuer Lovelace
+# -----------------------------------------------------------------------------
+
+button:
+  - platform: template
+    buttons:
+      rutx_multivpn_provision_button:
+        unique_id: rutx_multivpn_provision_button
+        name: "Multi-VPN Setup"
+        icon: mdi:cog-sync
+        press:
+          - service: script.rutx_multivpn_provision
+
+      rutx_multivpn_cleanup_button:
+        unique_id: rutx_multivpn_cleanup_button
+        name: "Multi-VPN Cleanup"
+        icon: mdi:delete-sweep
+        press:
+          - service: script.rutx_multivpn_cleanup
+
+      rutx_multivpn_refresh:
+        unique_id: rutx_multivpn_refresh
+        name: "Multi-VPN Status aktualisieren"
+        icon: mdi:refresh
+        press:
+          - service: homeassistant.update_entity
+            target:
+              entity_id: sensor.rutx_multi_vpn_status_raw
+
+      rutx_multivpn_check_button:
+        unique_id: rutx_multivpn_check_button
+        name: "Multi-VPN Diagnose"
+        icon: mdi:stethoscope
+        press:
+          - service: shell_command.rutx_multivpn_check

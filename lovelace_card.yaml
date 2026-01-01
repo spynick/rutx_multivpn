@@ -1,0 +1,226 @@
+# =============================================================================
+# RUTX Multi-VPN Lovelace Card
+# =============================================================================
+#
+# Kopiere diesen YAML Code in dein Lovelace Dashboard:
+#   1. Dashboard bearbeiten
+#   2. Karte hinzufuegen
+#   3. "Manuell" waehlen
+#   4. YAML einfuegen
+#
+# =============================================================================
+
+type: vertical-stack
+cards:
+  # Header mit Hauptschalter
+  - type: custom:mushroom-title-card
+    title: Multi-VPN Streaming
+    subtitle: DNS-basiertes Geo-Routing
+
+  - type: entities
+    entities:
+      - entity: input_boolean.rutx_multivpn_enabled
+        name: Multi-VPN
+        icon: mdi:vpn
+        secondary_info: last-changed
+
+  # Tunnel Status
+  - type: glance
+    title: Tunnel Status
+    columns: 3
+    show_state: true
+    entities:
+      - entity: sensor.rutx_multi_vpn_tunnel_de
+        name: Deutschland
+        icon: mdi:flag
+      - entity: sensor.rutx_multi_vpn_tunnel_ch
+        name: Schweiz
+        icon: mdi:flag
+      - entity: sensor.rutx_multi_vpn_tunnel_at
+        name: Oesterreich
+        icon: mdi:flag
+
+  # ipset Counts
+  - type: glance
+    title: Gecachte IPs (ipset)
+    columns: 3
+    show_state: true
+    entities:
+      - entity: sensor.rutx_multi_vpn_de_ips
+        name: DE IPs
+        icon: mdi:ip-network
+      - entity: sensor.rutx_multi_vpn_ch_ips
+        name: CH IPs
+        icon: mdi:ip-network
+      - entity: sensor.rutx_multi_vpn_at_ips
+        name: AT IPs
+        icon: mdi:ip-network
+
+  # Konfiguration
+  - type: entities
+    title: Konfiguration
+    show_header_toggle: false
+    entities:
+      - entity: input_text.rutx_multivpn_host
+        name: RUTX IP
+      - entity: input_text.rutx_multivpn_streaming_devices
+        name: Streaming Devices
+
+  # Aktionen
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Setup
+        icon: mdi:cog-sync
+        tap_action:
+          action: call-service
+          service: script.rutx_multivpn_provision
+        icon_height: 40px
+
+      - type: button
+        name: Refresh
+        icon: mdi:refresh
+        tap_action:
+          action: call-service
+          service: homeassistant.update_entity
+          target:
+            entity_id: sensor.rutx_multi_vpn_status_raw
+        icon_height: 40px
+
+      - type: button
+        name: Diagnose
+        icon: mdi:stethoscope
+        tap_action:
+          action: call-service
+          service: shell_command.rutx_multivpn_check
+        icon_height: 40px
+
+      - type: button
+        name: Cleanup
+        icon: mdi:delete-sweep
+        tap_action:
+          action: call-service
+          service: script.rutx_multivpn_cleanup
+          confirmation:
+            text: Multi-VPN Konfiguration wirklich entfernen?
+        icon_height: 40px
+
+---
+# =============================================================================
+# Alternative: Einfache Entities Card (ohne Mushroom)
+# =============================================================================
+
+type: entities
+title: RUTX Multi-VPN
+show_header_toggle: false
+entities:
+  - type: section
+    label: Steuerung
+
+  - entity: input_boolean.rutx_multivpn_enabled
+    name: Multi-VPN aktiviert
+
+  - type: section
+    label: Tunnel Status
+
+  - entity: sensor.rutx_multi_vpn_tunnel_de
+    name: Deutschland (SS_DE)
+    icon: mdi:tunnel
+
+  - entity: sensor.rutx_multi_vpn_tunnel_ch
+    name: Schweiz (SS_CH)
+    icon: mdi:tunnel
+
+  - entity: sensor.rutx_multi_vpn_tunnel_at
+    name: Oesterreich (SS_AT)
+    icon: mdi:tunnel
+
+  - type: section
+    label: DNS Cache (ipset)
+
+  - entity: sensor.rutx_multi_vpn_de_ips
+    name: Deutsche IPs
+    icon: mdi:ip-network
+
+  - entity: sensor.rutx_multi_vpn_ch_ips
+    name: Schweizer IPs
+    icon: mdi:ip-network
+
+  - entity: sensor.rutx_multi_vpn_at_ips
+    name: Oesterreichische IPs
+    icon: mdi:ip-network
+
+  - type: section
+    label: Konfiguration
+
+  - entity: input_text.rutx_multivpn_host
+    name: RUTX IP Adresse
+
+  - entity: input_text.rutx_multivpn_streaming_devices
+    name: Streaming Device IPs
+
+  - type: section
+    label: Aktionen
+
+  - entity: button.multi_vpn_setup
+    name: Initial Setup
+    icon: mdi:cog-sync
+
+  - entity: button.multi_vpn_status_aktualisieren
+    name: Status aktualisieren
+    icon: mdi:refresh
+
+  - entity: button.multi_vpn_diagnose
+    name: Diagnose ausfuehren
+    icon: mdi:stethoscope
+
+  - entity: button.multi_vpn_cleanup
+    name: Konfiguration entfernen
+    icon: mdi:delete-sweep
+
+---
+# =============================================================================
+# Kompakte Version (eine Karte)
+# =============================================================================
+
+type: vertical-stack
+cards:
+  - type: entities
+    title: Multi-VPN Streaming
+    show_header_toggle: false
+    entities:
+      # Hauptschalter
+      - entity: input_boolean.rutx_multivpn_enabled
+        name: VPN Routing
+        icon: mdi:vpn
+
+      # Tunnel inline
+      - type: attribute
+        entity: sensor.rutx_multi_vpn_status_raw
+        attribute: tunnels
+        name: Tunnel Status
+
+      # Buttons als custom:button-card oder einfach:
+      - type: buttons
+        entities:
+          - entity: button.multi_vpn_setup
+            name: Setup
+          - entity: button.multi_vpn_status_aktualisieren
+            name: Refresh
+
+  # Conditional: Zeige Details nur wenn aktiv
+  - type: conditional
+    conditions:
+      - condition: state
+        entity: input_boolean.rutx_multivpn_enabled
+        state: "on"
+    card:
+      type: glance
+      columns: 3
+      entities:
+        - entity: sensor.rutx_multi_vpn_tunnel_de
+          name: DE
+        - entity: sensor.rutx_multi_vpn_tunnel_ch
+          name: CH
+        - entity: sensor.rutx_multi_vpn_tunnel_at
+          name: AT

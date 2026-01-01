@@ -1,0 +1,29 @@
+# Oesterreichische Streaming Dienste
+# Format: Eine Domain pro Zeile
+# Wird von dnsmasq genutzt um IPs in ipset "austrian_ips" zu fuellen
+
+# ORF (Oesterreichischer Rundfunk)
+orf.at
+tvthek.orf.at
+on.orf.at
+player.orf.at
+radiothek.orf.at
+
+# ServusTV
+servustv.com
+servus.com
+
+# ATV
+atv.at
+
+# Puls4 / ProSiebenSat1 Austria
+puls4.com
+puls24.at
+
+# Krone TV
+krone.tv
+krone.at
+
+# OE24
+oe24.tv
+oe24.at

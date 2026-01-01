@@ -1,0 +1,37 @@
+# Schweizer Streaming Dienste
+# Format: Eine Domain pro Zeile
+# Wird von dnsmasq genutzt um IPs in ipset "swiss_ips" zu fuellen
+
+# SRF (Schweizer Radio und Fernsehen)
+srf.ch
+play.srf.ch
+tp.srgssr.ch
+srgssr.ch
+
+# Play Suisse (SRG Streaming Plattform)
+playsuisse.ch
+
+# RTS (Radio Television Suisse - Romandie)
+rts.ch
+play.rts.ch
+
+# RSI (Radiotelevisione svizzera - Tessin)
+rsi.ch
+play.rsi.ch
+
+# RTR (Radiotelevisiun Svizra Rumantscha)
+rtr.ch
+
+# Swisscom TV
+swisscom.ch
+tv.swisscom.ch
+
+# Teleclub/blue TV
+teleclub.ch
+blue.ch
+
+# 3+ / TV24
+3plus.tv
+tv24.ch
+tv25.ch
+s1.ch
