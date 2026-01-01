@@ -5,7 +5,7 @@
 # Richtet DNS-basiertes Split-Tunneling fuer Streaming ein
 #
 # Features:
-#   - Mehrere WireGuard Tunnel gleichzeitig (DE, CH, AT)
+#   - Mehrere WireGuard Tunnel gleichzeitig (dynamisch erkannt)
 #   - DNS-basiertes Routing (Domain -> ipset -> Tunnel)
 #   - Nur Streaming Devices werden geroutet
 #   - Management VPN bleibt UNANGETASTET
@@ -29,15 +29,9 @@ TUNNEL_PREFIX="SS"
 # Streaming Devices (wird vom Provisioning ueberschrieben)
 STREAMING_DEVICES="192.168.110.100"
 
-# Routing Tabellen
-RT_TABLE_DE=110
-RT_TABLE_CH=111
-RT_TABLE_AT=112
-
-# Firewall Marks
-MARK_DE=0x10
-MARK_CH=0x11
-MARK_AT=0x12
+# Basis fuer Routing Tabellen und Marks (werden dynamisch vergeben)
+RT_TABLE_BASE=110
+MARK_BASE=16  # 0x10 = 16 dezimal
 
 # Verzeichnisse
 SCRIPT_DIR="/root/multivpn"
@@ -83,6 +77,13 @@ is_our_tunnel() {
     esac
 }
 
+# Extrahiert Laendercode aus Interface Name: SS_DE -> de, SS_DE2 -> de
+get_country_from_iface() {
+    local iface="$1"
+    # Entferne SS_ prefix und trailing Ziffern
+    echo "$iface" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr '[:upper:]' '[:lower:]'
+}
+
 # =============================================================================
 # PREFLIGHT CHECKS
 # =============================================================================
@@ -114,19 +115,25 @@ mkdir -p "$DOMAIN_DIR"
 
 log "Richte Routing Tabellen ein..."
 
-# Tabellen in rt_tables eintragen (falls nicht vorhanden)
-for entry in "$RT_TABLE_DE vpn_de" "$RT_TABLE_CH vpn_ch" "$RT_TABLE_AT vpn_at"; do
-    table_id=$(echo "$entry" | cut -d' ' -f1)
-    table_name=$(echo "$entry" | cut -d' ' -f2)
-    if ! grep -q "$table_name" /etc/iproute2/rt_tables 2>/dev/null; then
-        echo "$table_id $table_name" >> /etc/iproute2/rt_tables
-        log "  Routing Tabelle $table_name ($table_id) hinzugefuegt"
+# Finde alle unsere SS_* Interfaces und erstelle Routing Tabellen
+idx=0
+for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
+    if is_our_tunnel "$iface"; then
+        country=$(get_country_from_iface "$iface")
+        table_id=$((RT_TABLE_BASE + idx))
+        table_name="vpn_${country}"
+
+        if ! grep -q "$table_name" /etc/iproute2/rt_tables 2>/dev/null; then
+            echo "$table_id $table_name" >> /etc/iproute2/rt_tables
+            log "  Routing Tabelle $table_name ($table_id) hinzugefuegt"
+        fi
+        idx=$((idx + 1))
     fi
 done
 
 # Permissions fuer openvpn/wireguard User
-chmod 755 /etc/iproute2
-chmod 644 /etc/iproute2/rt_tables
+chmod 755 /etc/iproute2 2>/dev/null || true
+chmod 644 /etc/iproute2/rt_tables 2>/dev/null || true
 
 # =============================================================================
 # IPSETS ERSTELLEN
@@ -134,14 +141,18 @@ chmod 644 /etc/iproute2/rt_tables
 
 log "Erstelle ipsets..."
 
-# ipsets fuer jedes Land (hash:ip fuer aufgeloeste IPs)
-for country in de ch at; do
-    ipset_name="${country}_ips"
-    if ! ipset list "$ipset_name" >/dev/null 2>&1; then
-        ipset create "$ipset_name" hash:ip timeout 3600
-        log "  ipset $ipset_name erstellt"
-    else
-        log "  ipset $ipset_name existiert bereits"
+# ipsets fuer jedes Land (basierend auf gefundenen Interfaces)
+for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
+    if is_our_tunnel "$iface"; then
+        country=$(get_country_from_iface "$iface")
+        ipset_name="${country}_ips"
+
+        if ! ipset list "$ipset_name" >/dev/null 2>&1; then
+            ipset create "$ipset_name" hash:ip timeout 3600
+            log "  ipset $ipset_name erstellt"
+        else
+            log "  ipset $ipset_name existiert bereits"
+        fi
     fi
 done
 
@@ -150,6 +161,9 @@ done
 # =============================================================================
 
 log "Konfiguriere dnsmasq..."
+
+# dnsmasq.d Verzeichnis erstellen falls nicht vorhanden
+mkdir -p /etc/dnsmasq.d
 
 # dnsmasq ipset Config erstellen
 cat > /etc/dnsmasq.d/multivpn-ipset.conf << 'DNSEOF'
@@ -171,12 +185,19 @@ DNSEOF
 
 log "  dnsmasq ipset Config erstellt"
 
+# dnsmasq soll conf-dir benutzen (UCI Methode fuer OpenWRT)
+if ! uci get dhcp.@dnsmasq[0].confdir >/dev/null 2>&1; then
+    uci set dhcp.@dnsmasq[0].confdir='/etc/dnsmasq.d'
+    uci commit dhcp
+    log "  dnsmasq confdir konfiguriert"
+fi
+
 # dnsmasq neu starten
 /etc/init.d/dnsmasq restart
 log "  dnsmasq neu gestartet"
 
 # =============================================================================
-# VPN SWITCH SCRIPT ERSTELLEN
+# VPN SWITCH SCRIPT ERSTELLEN (DYNAMISCH)
 # =============================================================================
 
 log "Erstelle VPN Control Scripts..."
@@ -184,74 +205,116 @@ log "Erstelle VPN Control Scripts..."
 cat > "$SCRIPT_DIR/vpn-control.sh" << 'VPNEOF'
 #!/bin/sh
 #
-# Multi-VPN Control Script
+# Multi-VPN Control Script (Dynamisch)
 # Usage: vpn-control.sh [on|off|status]
 #
 
 SCRIPT_DIR="/root/multivpn"
 CONFIG_FILE="$SCRIPT_DIR/config"
+TUNNEL_PREFIX="SS"
+RT_TABLE_BASE=110
+MARK_BASE=16
 
 # Lade Config
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
-
 STREAMING_DEVICES="${STREAMING_DEVICES:-192.168.110.100}"
 
-# Marks und Tabellen
-MARK_DE=0x10
-MARK_CH=0x11
-MARK_AT=0x12
-RT_TABLE_DE=110
-RT_TABLE_CH=111
-RT_TABLE_AT=112
+# Extrahiert Laendercode aus Interface Name: SS_DE -> de, SS_DE2 -> de
+get_country_from_iface() {
+    echo "$1" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr '[:upper:]' '[:lower:]'
+}
+
+# Finde alle SS_* Interfaces
+get_our_interfaces() {
+    uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | grep "^${TUNNEL_PREFIX}_" | sort -u
+}
+
+# Berechne Table/Mark fuer ein Land (basierend auf alphabetischer Reihenfolge)
+get_table_for_country() {
+    local country="$1"
+    local idx=0
+    for c in $(get_our_interfaces | while read iface; do get_country_from_iface "$iface"; done | sort -u); do
+        if [ "$c" = "$country" ]; then
+            echo $((RT_TABLE_BASE + idx))
+            return
+        fi
+        idx=$((idx + 1))
+    done
+    echo $RT_TABLE_BASE
+}
+
+get_mark_for_country() {
+    local country="$1"
+    local idx=0
+    for c in $(get_our_interfaces | while read iface; do get_country_from_iface "$iface"; done | sort -u); do
+        if [ "$c" = "$country" ]; then
+            printf "0x%x" $((MARK_BASE + idx))
+            return
+        fi
+        idx=$((idx + 1))
+    done
+    printf "0x%x" $MARK_BASE
+}
 
 case "$1" in
     on)
         echo "Aktiviere Multi-VPN Routing..."
 
-        # IP Rules fuer Marks -> Tabellen
-        ip rule del fwmark $MARK_DE table $RT_TABLE_DE 2>/dev/null
-        ip rule del fwmark $MARK_CH table $RT_TABLE_CH 2>/dev/null
-        ip rule del fwmark $MARK_AT table $RT_TABLE_AT 2>/dev/null
+        # Sammle alle Laender
+        countries=""
+        for iface in $(get_our_interfaces); do
+            country=$(get_country_from_iface "$iface")
+            if ! echo "$countries" | grep -q "$country"; then
+                countries="$countries $country"
+            fi
+        done
 
-        ip rule add fwmark $MARK_DE table $RT_TABLE_DE priority 100
-        ip rule add fwmark $MARK_CH table $RT_TABLE_CH priority 101
-        ip rule add fwmark $MARK_AT table $RT_TABLE_AT priority 102
+        # IP Rules aufsetzen
+        for country in $countries; do
+            table=$(get_table_for_country "$country")
+            mark=$(get_mark_for_country "$country")
+
+            ip rule del fwmark $mark table $table 2>/dev/null || true
+            ip rule add fwmark $mark table $table priority $table
+            echo "  Rule: $country mark=$mark -> table=$table"
+        done
 
         # WireGuard Interfaces aktivieren
-        for iface in SS_DE SS_CH SS_AT; do
-            if uci get network.$iface >/dev/null 2>&1; then
-                ifup $iface 2>/dev/null || true
-            fi
+        for iface in $(get_our_interfaces); do
+            echo "  Aktiviere: $iface"
+            ifup "$iface" 2>/dev/null || true
         done
 
         # Warte auf Tunnel
         sleep 3
 
-        # Default Routes in Tabellen setzen
-        for entry in "SS_DE $RT_TABLE_DE" "SS_CH $RT_TABLE_CH" "SS_AT $RT_TABLE_AT"; do
-            iface=$(echo "$entry" | cut -d' ' -f1)
-            table=$(echo "$entry" | cut -d' ' -f2)
-
-            # Finde Gateway (Peer Endpoint)
-            gw=$(wg show "$iface" endpoints 2>/dev/null | awk '{print $2}' | cut -d: -f1)
-            if [ -n "$gw" ]; then
-                ip route replace default dev "$iface" table "$table"
-            fi
+        # Routes in Tabellen setzen (erstes Interface pro Land)
+        for country in $countries; do
+            table=$(get_table_for_country "$country")
+            # Finde erstes Interface fuer dieses Land
+            for iface in $(get_our_interfaces); do
+                iface_country=$(get_country_from_iface "$iface")
+                if [ "$iface_country" = "$country" ]; then
+                    if wg show "$iface" >/dev/null 2>&1; then
+                        ip route replace default dev "$iface" table "$table"
+                        echo "  Route: table $table -> $iface"
+                    fi
+                    break
+                fi
+            done
         done
 
         # iptables Regeln aktivieren
         for IP in $STREAMING_DEVICES; do
-            # DE Traffic
-            iptables -t mangle -C PREROUTING -s $IP -m set --match-set de_ips dst -j MARK --set-mark $MARK_DE 2>/dev/null || \
-            iptables -t mangle -A PREROUTING -s $IP -m set --match-set de_ips dst -j MARK --set-mark $MARK_DE
+            for country in $countries; do
+                ipset_name="${country}_ips"
+                mark=$(get_mark_for_country "$country")
 
-            # CH Traffic
-            iptables -t mangle -C PREROUTING -s $IP -m set --match-set ch_ips dst -j MARK --set-mark $MARK_CH 2>/dev/null || \
-            iptables -t mangle -A PREROUTING -s $IP -m set --match-set ch_ips dst -j MARK --set-mark $MARK_CH
-
-            # AT Traffic
-            iptables -t mangle -C PREROUTING -s $IP -m set --match-set at_ips dst -j MARK --set-mark $MARK_AT 2>/dev/null || \
-            iptables -t mangle -A PREROUTING -s $IP -m set --match-set at_ips dst -j MARK --set-mark $MARK_AT
+                if ipset list "$ipset_name" >/dev/null 2>&1; then
+                    iptables -t mangle -C PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark 2>/dev/null || \
+                    iptables -t mangle -A PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark
+                fi
+            done
         done
 
         echo "Multi-VPN Routing aktiviert"
@@ -260,21 +323,36 @@ case "$1" in
     off)
         echo "Deaktiviere Multi-VPN Routing..."
 
+        # Sammle alle Laender
+        countries=""
+        for iface in $(get_our_interfaces); do
+            country=$(get_country_from_iface "$iface")
+            if ! echo "$countries" | grep -q "$country"; then
+                countries="$countries $country"
+            fi
+        done
+
         # iptables Regeln entfernen
         for IP in $STREAMING_DEVICES; do
-            iptables -t mangle -D PREROUTING -s $IP -m set --match-set de_ips dst -j MARK --set-mark $MARK_DE 2>/dev/null
-            iptables -t mangle -D PREROUTING -s $IP -m set --match-set ch_ips dst -j MARK --set-mark $MARK_CH 2>/dev/null
-            iptables -t mangle -D PREROUTING -s $IP -m set --match-set at_ips dst -j MARK --set-mark $MARK_AT 2>/dev/null
+            for country in $countries; do
+                ipset_name="${country}_ips"
+                mark=$(get_mark_for_country "$country")
+
+                iptables -t mangle -D PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark 2>/dev/null || true
+            done
         done
 
         # IP Rules entfernen
-        ip rule del fwmark $MARK_DE table $RT_TABLE_DE 2>/dev/null
-        ip rule del fwmark $MARK_CH table $RT_TABLE_CH 2>/dev/null
-        ip rule del fwmark $MARK_AT table $RT_TABLE_AT 2>/dev/null
+        for country in $countries; do
+            table=$(get_table_for_country "$country")
+            mark=$(get_mark_for_country "$country")
+            ip rule del fwmark $mark table $table 2>/dev/null || true
+        done
 
-        # WireGuard Interfaces deaktivieren (nur unsere!)
-        for iface in SS_DE SS_CH SS_AT; do
-            ifdown $iface 2>/dev/null || true
+        # WireGuard Interfaces deaktivieren
+        for iface in $(get_our_interfaces); do
+            echo "  Deaktiviere: $iface"
+            ifdown "$iface" 2>/dev/null || true
         done
 
         echo "Multi-VPN Routing deaktiviert"
@@ -282,32 +360,52 @@ case "$1" in
 
     status)
         # JSON Status ausgeben
-        de_up="false"
-        ch_up="false"
-        at_up="false"
+        tunnels_json="{"
+        first=1
+        for iface in $(get_our_interfaces); do
+            country=$(get_country_from_iface "$iface" | tr '[:lower:]' '[:upper:]')
+            up="false"
+            wg show "$iface" >/dev/null 2>&1 && up="true"
 
-        wg show SS_DE >/dev/null 2>&1 && de_up="true"
-        wg show SS_CH >/dev/null 2>&1 && ch_up="true"
-        wg show SS_AT >/dev/null 2>&1 && at_up="true"
+            if [ $first -eq 1 ]; then
+                first=0
+            else
+                tunnels_json="$tunnels_json,"
+            fi
+            tunnels_json="$tunnels_json\"$iface\":$up"
+        done
+        tunnels_json="$tunnels_json}"
+
+        # ipset counts
+        ipset_json="{"
+        first=1
+        for iface in $(get_our_interfaces); do
+            country=$(get_country_from_iface "$iface")
+            ipset_name="${country}_ips"
+            count=$(ipset list "$ipset_name" 2>/dev/null | grep -c "^[0-9]" || echo 0)
+
+            # Nur einmal pro Land
+            if ! echo "$ipset_json" | grep -q "\"$country\""; then
+                if [ $first -eq 1 ]; then
+                    first=0
+                else
+                    ipset_json="$ipset_json,"
+                fi
+                ipset_json="$ipset_json\"$country\":$count"
+            fi
+        done
+        ipset_json="$ipset_json}"
 
         # Pruefen ob Routing aktiv
         routing_active="false"
-        ip rule show | grep -q "fwmark 0x10" && routing_active="true"
+        ip rule show | grep -q "fwmark 0x1" && routing_active="true"
 
         cat << STATUSEOF
 {
   "active": $routing_active,
-  "tunnels": {
-    "DE": $de_up,
-    "CH": $ch_up,
-    "AT": $at_up
-  },
+  "tunnels": $tunnels_json,
   "streaming_devices": "$STREAMING_DEVICES",
-  "ipset_counts": {
-    "de": $(ipset list de_ips 2>/dev/null | grep -c "^[0-9]" || echo 0),
-    "ch": $(ipset list ch_ips 2>/dev/null | grep -c "^[0-9]" || echo 0),
-    "at": $(ipset list at_ips 2>/dev/null | grep -c "^[0-9]" || echo 0)
-  }
+  "ipset_counts": $ipset_json
 }
 STATUSEOF
         ;;
@@ -387,10 +485,18 @@ STREAMING_DEVICES="$STREAMING_DEVICES"
 CONFEOF
 
 # =============================================================================
-# FIREWALL ZONE FUER VPN
+# FIREWALL ZONE FUER VPN (DYNAMISCH)
 # =============================================================================
 
 log "Konfiguriere Firewall..."
+
+# Sammle alle unsere Interfaces fuer die Firewall Zone
+our_interfaces=""
+for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
+    if is_our_tunnel "$iface"; then
+        our_interfaces="$our_interfaces $iface"
+    fi
+done
 
 # Pruefen ob vpn Zone existiert
 if ! uci get firewall.vpn_zone >/dev/null 2>&1; then
@@ -401,11 +507,13 @@ if ! uci get firewall.vpn_zone >/dev/null 2>&1; then
     uci set firewall.vpn_zone.forward='REJECT'
     uci set firewall.vpn_zone.masq='1'
     uci set firewall.vpn_zone.mtu_fix='1'
-    uci add_list firewall.vpn_zone.network='SS_DE'
-    uci add_list firewall.vpn_zone.network='SS_CH'
-    uci add_list firewall.vpn_zone.network='SS_AT'
+
+    for iface in $our_interfaces; do
+        uci add_list firewall.vpn_zone.network="$iface"
+    done
+
     uci commit firewall
-    log "  VPN Firewall Zone erstellt"
+    log "  VPN Firewall Zone erstellt mit: $our_interfaces"
 else
     log "  VPN Firewall Zone existiert"
 fi
@@ -426,10 +534,16 @@ fi
 log ""
 log "=== Setup abgeschlossen ==="
 log ""
+log "Gefundene Tunnel:"
+for iface in $our_interfaces; do
+    country=$(get_country_from_iface "$iface")
+    log "  - $iface ($country)"
+done
+log ""
 log "Naechste Schritte:"
-log "  1. WireGuard Configs hochladen (SS_DE, SS_CH, SS_AT)"
-log "  2. vpn-control.sh on  - Routing aktivieren"
-log "  3. vpn-control.sh off - Routing deaktivieren"
+log "  1. vpn-control.sh on  - Routing aktivieren"
+log "  2. vpn-control.sh off - Routing deaktivieren"
+log "  3. vpn-control.sh status - Status anzeigen"
 log ""
 
 exit 0
