@@ -9,6 +9,7 @@
 #   - DNS-basiertes Routing (Domain -> ipset -> Tunnel)
 #   - Nur Streaming Devices werden geroutet
 #   - Management VPN bleibt UNANGETASTET
+#   - Automatische dnsmasq-full Installation (mit ipset Support)
 #
 # WICHTIG: Folgende WireGuard Interfaces werden NIEMALS angefasst:
 #   - WG, MGMT, HOME, VPN (und Varianten)
@@ -99,6 +100,51 @@ fi
 if ! command -v ipset >/dev/null 2>&1; then
     log "ipset nicht gefunden, installiere..."
     opkg update && opkg install ipset
+fi
+
+# =============================================================================
+# DNSMASQ-FULL INSTALLATION (mit ipset Support)
+# =============================================================================
+
+log "Pruefe dnsmasq ipset Support..."
+
+# Pruefen ob dnsmasq ipset unterstuetzt
+if dnsmasq --help 2>&1 | grep -q "no-ipset"; then
+    log "  dnsmasq hat KEINEN ipset Support, installiere dnsmasq-full..."
+
+    # Backup der aktuellen dnsmasq config
+    cp /etc/config/dhcp /etc/config/dhcp.backup 2>/dev/null || true
+
+    # OpenWRT Repo hinzufuegen falls nicht vorhanden
+    if ! grep -q "openwrt_base" /etc/opkg/customfeeds.conf 2>/dev/null; then
+        log "  Fuege OpenWRT Repository hinzu..."
+        echo "src/gz openwrt_base https://downloads.openwrt.org/releases/21.02.0/packages/arm_cortex-a7_neon-vfpv4/base" >> /etc/opkg/customfeeds.conf
+    fi
+
+    # Paketlisten aktualisieren
+    log "  Aktualisiere Paketlisten..."
+    opkg update
+
+    # dnsmasq entfernen und dnsmasq-full installieren
+    log "  Ersetze dnsmasq durch dnsmasq-full..."
+    opkg remove dnsmasq --force-depends
+    opkg install dnsmasq-full
+
+    # dnsmasq init.d patchen (Teltonika nutzt anderen Pfad)
+    if [ -f /usr/local/usr/sbin/dnsmasq ]; then
+        log "  Patche /etc/init.d/dnsmasq fuer dnsmasq-full Pfad..."
+        sed -i 's|PROG=/usr/sbin/dnsmasq|PROG=/usr/local/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
+    fi
+
+    # Restore config
+    cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
+
+    # Flag fuer Reboot am Ende setzen
+    touch /tmp/.multivpn_needs_reboot
+
+    log "  dnsmasq-full installiert"
+else
+    log "  dnsmasq hat bereits ipset Support"
 fi
 
 # =============================================================================
@@ -545,5 +591,17 @@ log "  1. vpn-control.sh on  - Routing aktivieren"
 log "  2. vpn-control.sh off - Routing deaktivieren"
 log "  3. vpn-control.sh status - Status anzeigen"
 log ""
+
+# =============================================================================
+# REBOOT (falls dnsmasq-full installiert wurde)
+# =============================================================================
+
+if [ -f /tmp/.multivpn_needs_reboot ]; then
+    rm -f /tmp/.multivpn_needs_reboot
+    log "HINWEIS: dnsmasq-full wurde installiert."
+    log "         System wird in 5 Sekunden neu gestartet..."
+    sleep 5
+    reboot
+fi
 
 exit 0

@@ -150,11 +150,11 @@ for country in $PROFILE_LIST; do
     # Config hochladen
     scp_file "$conf_file" "/root/multivpn/${filename}"
 
-    # WireGuard Config parsen
-    PRIVATE_KEY=$(grep "^PrivateKey" "$conf_file" | cut -d'=' -f2 | tr -d ' ')
-    ADDRESS=$(grep "^Address" "$conf_file" | cut -d'=' -f2 | tr -d ' ')
-    PUBLIC_KEY=$(grep "^PublicKey" "$conf_file" | cut -d'=' -f2 | tr -d ' ')
-    ENDPOINT=$(grep "^Endpoint" "$conf_file" | cut -d'=' -f2 | tr -d ' ')
+    # WireGuard Config parsen (sed statt cut um = am Ende zu erhalten)
+    PRIVATE_KEY=$(grep "^PrivateKey" "$conf_file" | sed 's/^PrivateKey *= *//' | tr -d ' ')
+    ADDRESS=$(grep "^Address" "$conf_file" | sed 's/^Address *= *//' | tr -d ' ')
+    PUBLIC_KEY=$(grep "^PublicKey" "$conf_file" | sed 's/^PublicKey *= *//' | tr -d ' ')
+    ENDPOINT=$(grep "^Endpoint" "$conf_file" | sed 's/^Endpoint *= *//' | tr -d ' ')
     ENDPOINT_HOST=$(echo "$ENDPOINT" | cut -d':' -f1)
     ENDPOINT_PORT=$(echo "$ENDPOINT" | cut -d':' -f2)
 
@@ -165,9 +165,9 @@ for country in $PROFILE_LIST; do
         # Altes Interface loeschen falls vorhanden
         uci delete network.${iface_name} 2>/dev/null || true
 
-        # Alle Peers fuer dieses Interface loeschen
-        for peer in \$(uci show network 2>/dev/null | grep \"wireguard_${iface_name}\" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
-            uci delete network.\$peer 2>/dev/null || true
+        # Alle Peers fuer dieses Interface loeschen (anonyme Sections)
+        while uci -q get network.@wireguard_${iface_name}[0] >/dev/null 2>&1; do
+            uci delete network.@wireguard_${iface_name}[0]
         done
 
         # WireGuard Interface anlegen
@@ -177,14 +177,14 @@ for country in $PROFILE_LIST; do
         uci add_list network.${iface_name}.addresses='${ADDRESS}'
         uci set network.${iface_name}.auto='0'
 
-        # Peer anlegen
-        uci set network.${iface_name}_peer=wireguard_${iface_name}
-        uci set network.${iface_name}_peer.public_key='${PUBLIC_KEY}'
-        uci set network.${iface_name}_peer.endpoint_host='${ENDPOINT_HOST}'
-        uci set network.${iface_name}_peer.endpoint_port='${ENDPOINT_PORT}'
-        uci add_list network.${iface_name}_peer.allowed_ips='0.0.0.0/0'
-        uci set network.${iface_name}_peer.persistent_keepalive='25'
-        uci set network.${iface_name}_peer.route_allowed_ips='0'
+        # Peer als anonyme Section anlegen
+        uci add network wireguard_${iface_name}
+        uci set network.@wireguard_${iface_name}[-1].public_key='${PUBLIC_KEY}'
+        uci set network.@wireguard_${iface_name}[-1].endpoint_host='${ENDPOINT_HOST}'
+        uci set network.@wireguard_${iface_name}[-1].endpoint_port='${ENDPOINT_PORT}'
+        uci add_list network.@wireguard_${iface_name}[-1].allowed_ips='0.0.0.0/0'
+        uci set network.@wireguard_${iface_name}[-1].persistent_keepalive='25'
+        uci set network.@wireguard_${iface_name}[-1].route_allowed_ips='0'
     "
 
     log "    UCI konfiguriert"

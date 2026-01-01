@@ -7,6 +7,11 @@
 # WICHTIG: Management VPNs werden NIEMALS angefasst!
 # Geschuetzte Namen: WG, MGMT, HOME, VPN (und Varianten)
 #
+# Features:
+#   - Entfernt alle SS_* WireGuard Tunnel
+#   - Setzt dnsmasq-full zurueck auf Standard dnsmasq
+#   - Bereinigt Firewall und Routing
+#
 
 set -e
 
@@ -133,21 +138,64 @@ done
 # SCHRITT 4: DNSMASQ CONFIG ENTFERNEN
 # =============================================================================
 
-log "[4/7] Entferne dnsmasq Konfiguration..."
+log "[4/8] Entferne dnsmasq Konfiguration..."
 
 if [ -f /etc/dnsmasq.d/multivpn-ipset.conf ]; then
     rm -f /etc/dnsmasq.d/multivpn-ipset.conf
-    /etc/init.d/dnsmasq restart
-    log "  dnsmasq Config entfernt"
+    log "  dnsmasq ipset Config entfernt"
 else
     log "  Keine dnsmasq Config vorhanden"
 fi
 
+# dnsmasq confdir entfernen
+if uci get dhcp.@dnsmasq[0].confdir >/dev/null 2>&1; then
+    uci delete dhcp.@dnsmasq[0].confdir
+    uci commit dhcp
+    log "  dnsmasq confdir Einstellung entfernt"
+fi
+
 # =============================================================================
-# SCHRITT 5: FIREWALL REGELN ENTFERNEN
+# SCHRITT 5: DNSMASQ-FULL ZURUECKSETZEN
 # =============================================================================
 
-log "[5/7] Entferne Firewall Konfiguration..."
+log "[5/8] Setze dnsmasq zurueck..."
+
+# Pruefen ob dnsmasq-full installiert ist
+if opkg list-installed | grep -q "dnsmasq-full"; then
+    log "  dnsmasq-full gefunden, setze zurueck auf Standard..."
+
+    # Backup der aktuellen dnsmasq config
+    cp /etc/config/dhcp /etc/config/dhcp.backup 2>/dev/null || true
+
+    # dnsmasq-full entfernen und normales dnsmasq installieren
+    opkg remove dnsmasq-full --force-depends 2>/dev/null || true
+    opkg install dnsmasq 2>/dev/null || true
+
+    # init.d zuruecksetzen (falls gepatcht)
+    if grep -q "/usr/local/usr/sbin/dnsmasq" /etc/init.d/dnsmasq 2>/dev/null; then
+        sed -i 's|PROG=/usr/local/usr/sbin/dnsmasq|PROG=/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
+        log "  /etc/init.d/dnsmasq Pfad zurueckgesetzt"
+    fi
+
+    # Config restore
+    cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
+
+    # OpenWRT Repo entfernen
+    sed -i '/openwrt_base/d' /etc/opkg/customfeeds.conf 2>/dev/null || true
+
+    log "  dnsmasq zurueckgesetzt"
+else
+    log "  Standard dnsmasq ist installiert"
+fi
+
+# dnsmasq neu starten
+/etc/init.d/dnsmasq restart 2>/dev/null || true
+
+# =============================================================================
+# SCHRITT 6: FIREWALL REGELN ENTFERNEN
+# =============================================================================
+
+log "[6/8] Entferne Firewall Konfiguration..."
 
 # VPN Zone entfernen (nur wenn sie unsere Tunnel enthaelt)
 if uci get firewall.vpn_zone >/dev/null 2>&1; then
@@ -170,24 +218,27 @@ fi
 uci commit firewall 2>/dev/null || true
 
 # =============================================================================
-# SCHRITT 6: ROUTING TABELLEN BEREINIGEN
+# SCHRITT 7: ROUTING TABELLEN BEREINIGEN
 # =============================================================================
 
-log "[6/7] Bereinige Routing Tabellen..."
+log "[7/8] Bereinige Routing Tabellen..."
 
-# Eintraege aus rt_tables entfernen
+# Eintraege aus rt_tables entfernen (lowercase und uppercase)
 if [ -f /etc/iproute2/rt_tables ]; then
     sed -i '/vpn_de/d' /etc/iproute2/rt_tables
     sed -i '/vpn_ch/d' /etc/iproute2/rt_tables
     sed -i '/vpn_at/d' /etc/iproute2/rt_tables
+    sed -i '/vpn_DE/d' /etc/iproute2/rt_tables
+    sed -i '/vpn_CH/d' /etc/iproute2/rt_tables
+    sed -i '/vpn_AT/d' /etc/iproute2/rt_tables
     log "  Routing Tabellen bereinigt"
 fi
 
 # =============================================================================
-# SCHRITT 7: SCRIPTS UND CONFIGS ENTFERNEN
+# SCHRITT 8: SCRIPTS UND CONFIGS ENTFERNEN
 # =============================================================================
 
-log "[7/7] Entferne Scripts und Konfiguration..."
+log "[8/8] Entferne Scripts und Konfiguration..."
 
 if [ -d /root/multivpn ]; then
     rm -rf /root/multivpn
