@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 #
 # RUTX Multi-VPN Command Wrapper
 # ===============================
