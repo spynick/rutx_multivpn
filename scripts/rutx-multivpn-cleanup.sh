@@ -94,10 +94,10 @@ log "  Routing deaktiviert"
 # SCHRITT 2: WIREGUARD INTERFACES ENTFERNEN (NUR SS_*)
 # =============================================================================
 
-log "[2/7] Entferne Streaming WireGuard Interfaces..."
+log "[2/8] Entferne Streaming WireGuard Interfaces..."
 
-# Alle WireGuard Interfaces durchgehen
-for iface in $(uci show network 2>/dev/null | grep "=wireguard" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
+# Alle Network Interfaces durchgehen (SS_* sind unsere)
+for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
     if is_protected "$iface"; then
         warn "  UEBERSPRINGE geschuetztes Interface: $iface"
         continue
@@ -107,25 +107,31 @@ for iface in $(uci show network 2>/dev/null | grep "=wireguard" | cut -d'.' -f2 
         log "  Entferne: $iface"
         # Interface stoppen
         ifdown "$iface" 2>/dev/null || true
-        # UCI Config loeschen
-        uci delete "network.$iface" 2>/dev/null || true
-        # Peer Config loeschen
-        for peer in $(uci show network 2>/dev/null | grep "wireguard_${iface}" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
-            uci delete "network.$peer" 2>/dev/null || true
+
+        # Anonyme Peer Sections loeschen (wireguard_SS_XX)
+        while uci -q get network.@wireguard_${iface}[0] >/dev/null 2>&1; do
+            uci delete network.@wireguard_${iface}[0] 2>/dev/null || true
         done
-    else
-        log "  Ueberspringe fremdes Interface: $iface"
+
+        # Interface Config loeschen
+        uci delete "network.$iface" 2>/dev/null || true
+
+        log "    Interface und Peers entfernt"
     fi
 done
 
 uci commit network 2>/dev/null || true
+
+# Network neu laden damit Interfaces wirklich weg sind
+/etc/init.d/network reload 2>/dev/null || true
+
 log "  WireGuard Interfaces bereinigt"
 
 # =============================================================================
 # SCHRITT 3: IPSETS ENTFERNEN
 # =============================================================================
 
-log "[3/7] Entferne ipsets..."
+log "[3/8] Entferne ipsets..."
 
 for ipset_name in de_ips ch_ips at_ips; do
     if ipset list "$ipset_name" >/dev/null 2>&1; then
