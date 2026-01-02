@@ -40,7 +40,6 @@ SCRIPT_DIR="/root/multivpn"
 CONFIG_DIR="/etc/config/multivpn"
 CONFIG_FILE="$CONFIG_DIR/config"
 DOMAIN_DIR="$SCRIPT_DIR/domains"
-DNSMASQ_IPSET_CONF="$CONFIG_DIR/dnsmasq-ipset.conf"
 
 # Config laden falls vorhanden (wird von Provisioning erstellt)
 if [ -f "$CONFIG_FILE" ]; then
@@ -273,8 +272,11 @@ done
 
 log "Konfiguriere dnsmasq..."
 
-# dnsmasq ipset Config in /etc/config/multivpn erstellen (ueberlebt Firmware Updates)
-cat > "$DNSMASQ_IPSET_CONF" << 'DNSEOF'
+# dnsmasq ipset Config in /root/multivpn erstellen (wird bei FW Update geloescht = sicher!)
+# WICHTIG: Nicht in /etc/dnsmasq.d/ direkt, sonst crasht dnsmasq nach FW Update
+DNSMASQ_IPSET_LOCAL="$SCRIPT_DIR/dnsmasq-ipset.conf"
+
+cat > "$DNSMASQ_IPSET_LOCAL" << 'DNSEOF'
 # Multi-VPN DNS-basiertes Routing
 # Domains werden bei DNS-Aufloesung in ipsets eingetragen
 
@@ -291,14 +293,43 @@ ipset=/orf.at/tvthek.orf.at/servustv.com/atv.at/puls4.com/puls24.at/at_ips
 ipset=/krone.at/krone.tv/oe24.at/oe24.tv/at_ips
 DNSEOF
 
-log "  dnsmasq ipset Config erstellt in $DNSMASQ_IPSET_CONF"
+log "  dnsmasq ipset Config erstellt in $DNSMASQ_IPSET_LOCAL"
 
-# Symlink in /etc/dnsmasq.d erstellen (nur wenn dnsmasq-full aktiv)
+# Symlink in /etc/dnsmasq.d erstellen
+# Bei FW Update: /root/multivpn wird geloescht -> Symlink ist broken -> dnsmasq ignoriert ihn
 mkdir -p /etc/dnsmasq.d
-if [ -f /usr/local/usr/sbin/dnsmasq ]; then
-    ln -sf "$DNSMASQ_IPSET_CONF" /etc/dnsmasq.d/multivpn-ipset.conf
-    log "  Symlink /etc/dnsmasq.d/multivpn-ipset.conf erstellt"
-fi
+ln -sf "$DNSMASQ_IPSET_LOCAL" /etc/dnsmasq.d/multivpn-ipset.conf
+log "  Symlink /etc/dnsmasq.d/multivpn-ipset.conf -> $DNSMASQ_IPSET_LOCAL"
+
+# Hotplug Script erstellen das bei Boot pruefen kann ob dnsmasq-full vorhanden
+# Falls nicht, wird der Symlink entfernt um Crash zu verhindern
+cat > /etc/hotplug.d/iface/99-multivpn-dnsmasq-check << 'HOTPLUGEOF'
+#!/bin/sh
+# Multi-VPN: Prueft ob dnsmasq ipset Support hat
+# Falls nicht, entferne die ipset Config um Crash zu verhindern
+
+[ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "lan" ] && {
+    DNSMASQ_CONF="/etc/dnsmasq.d/multivpn-ipset.conf"
+
+    # Wenn Symlink existiert aber Ziel nicht (= nach FW Update)
+    if [ -L "$DNSMASQ_CONF" ] && [ ! -e "$DNSMASQ_CONF" ]; then
+        logger -t multivpn "Broken symlink $DNSMASQ_CONF entfernt (nach FW Update?)"
+        rm -f "$DNSMASQ_CONF"
+        /etc/init.d/dnsmasq restart
+    fi
+
+    # Wenn Config existiert aber dnsmasq kein ipset Support hat
+    if [ -f "$DNSMASQ_CONF" ]; then
+        if /usr/sbin/dnsmasq --version 2>&1 | grep -q "no-ipset"; then
+            logger -t multivpn "dnsmasq hat kein ipset Support, entferne Config"
+            rm -f "$DNSMASQ_CONF"
+            /etc/init.d/dnsmasq restart
+        fi
+    fi
+}
+HOTPLUGEOF
+chmod +x /etc/hotplug.d/iface/99-multivpn-dnsmasq-check
+log "  Hotplug Script fuer dnsmasq-Check erstellt"
 
 # dnsmasq soll conf-dir benutzen (UCI Methode fuer OpenWRT)
 if ! uci get dhcp.@dnsmasq[0].confdir >/dev/null 2>&1; then
