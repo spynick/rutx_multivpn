@@ -1,0 +1,20 @@
+# =============================================================================
+# RUTX Shared Configuration
+# =============================================================================
+# Gemeinsame Einstellungen fuer rutx_vpn und rutx_multivpn
+#
+# Installation:
+#   1. Datei nach /config/packages/rutx_shared.yaml kopieren
+#   2. HA neu starten oder YAML neu laden
+#
+# =============================================================================
+
+input_text:
+  # Notify Service fuer VPN Status-Meldungen
+  # Beispiele:
+  #   - notify.telegram_bot_6572143475_4063079954
+  #   - notify.persistent_notification (HA WebUI)
+  #   - notify.mobile_app_<phone>
+  rutx_notify_service:
+    name: "RUTX Notify Service"
+    mode: text
