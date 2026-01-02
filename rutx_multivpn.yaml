@@ -31,12 +31,10 @@ input_text:
   rutx_multivpn_streaming_devices:
     name: "Multi-VPN Streaming Devices"
     icon: mdi:television
-    initial: "192.168.110.100"
 
   rutx_multivpn_host:
     name: "Multi-VPN RUTX IP"
     icon: mdi:router-wireless
-    initial: "192.168.110.1"
 
 input_boolean:
   rutx_multivpn_enabled:
