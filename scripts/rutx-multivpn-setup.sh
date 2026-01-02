@@ -1,15 +1,16 @@
 #!/bin/sh
 #
-# RUTX Multi-VPN Setup Script
-# ============================
-# Richtet DNS-basiertes Split-Tunneling fuer Streaming ein
+# RUTX Multi-VPN Setup Script (nslookup-basiert)
+# ================================================
+# Richtet Split-Tunneling fuer Streaming ein
+# OHNE dnsmasq-full - nutzt nslookup + cronjob stattdessen
 #
 # Features:
 #   - Mehrere WireGuard Tunnel gleichzeitig (dynamisch erkannt)
-#   - DNS-basiertes Routing (Domain -> ipset -> Tunnel)
+#   - nslookup-basiertes IP-Update (kein dnsmasq-full noetig!)
 #   - Nur Streaming Devices werden geroutet
 #   - Management VPN bleibt UNANGETASTET
-#   - Automatische dnsmasq-full Installation (mit ipset Support)
+#   - Ueberlebt Firmware Updates (Config in /etc/config/multivpn)
 #
 # WICHTIG: Folgende WireGuard Interfaces werden NIEMALS angefasst:
 #   - WG, MGMT, HOME, VPN (und Varianten)
@@ -28,7 +29,6 @@ PROTECTED_PATTERNS="WG MGMT HOME VPN wg mgmt home vpn"
 TUNNEL_PREFIX="SS"
 
 # Streaming Devices (wird vom Provisioning gesetzt)
-# Leer lassen - muss ueber Config oder Provisioning gesetzt werden
 STREAMING_DEVICES="${STREAMING_DEVICES:-}"
 
 # Basis fuer Routing Tabellen und Marks (werden dynamisch vergeben)
@@ -44,6 +44,10 @@ DOMAIN_DIR="$SCRIPT_DIR/domains"
 # Config laden falls vorhanden (wird von Provisioning erstellt)
 if [ -f "$CONFIG_FILE" ]; then
     . "$CONFIG_FILE"
+fi
+# Fallback: Config in SCRIPT_DIR
+if [ -f "$SCRIPT_DIR/config" ]; then
+    . "$SCRIPT_DIR/config"
 fi
 
 # =============================================================================
@@ -68,7 +72,6 @@ is_protected() {
         if [ "$name" = "$pattern" ]; then
             return 0  # ist geschuetzt
         fi
-        # Auch pruefen ob Name mit Pattern beginnt
         case "$name" in
             ${pattern}*|*${pattern}) return 0 ;;
         esac
@@ -88,8 +91,6 @@ is_our_tunnel() {
 # Extrahiert Laendercode aus Interface Name: SS_DE -> de, SS_DE2 -> de
 get_country_from_iface() {
     local iface="$1"
-    # Entferne SS_ prefix und trailing Ziffern
-    # BusyBox tr braucht A-Z statt [:upper:]
     echo "$iface" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr 'A-Z' 'a-z'
 }
 
@@ -97,7 +98,7 @@ get_country_from_iface() {
 # PREFLIGHT CHECKS
 # =============================================================================
 
-log "=== RUTX Multi-VPN Setup Start ==="
+log "=== RUTX Multi-VPN Setup Start (nslookup-basiert) ==="
 
 # Pruefen ob WireGuard verfuegbar
 if ! command -v wg >/dev/null 2>&1; then
@@ -110,104 +111,9 @@ if ! command -v ipset >/dev/null 2>&1; then
     opkg update && opkg install ipset
 fi
 
-# =============================================================================
-# DNSMASQ-FULL INSTALLATION (mit ipset Support)
-# =============================================================================
-
-log "Pruefe dnsmasq ipset Support..."
-
-# Pruefen ob dnsmasq ipset unterstuetzt (--version zeigt compile options)
-# Zuerst pruefen ob dnsmasq-full bereits installiert ist
-DNSMASQ_BIN="/usr/sbin/dnsmasq"
-if [ -f /usr/local/usr/sbin/dnsmasq ]; then
-    DNSMASQ_BIN="/usr/local/usr/sbin/dnsmasq"
-fi
-
-if $DNSMASQ_BIN --version 2>&1 | grep -q "no-ipset"; then
-    log "  dnsmasq hat KEINEN ipset Support, installiere dnsmasq-full..."
-
-    # Backup der aktuellen dnsmasq config UND init.d script
-    cp /etc/config/dhcp /etc/config/dhcp.backup 2>/dev/null || true
-    cp /etc/init.d/dnsmasq /etc/init.d/dnsmasq.backup 2>/dev/null || true
-
-    # OpenWRT Repo hinzufuegen falls nicht vorhanden
-    # Architektur automatisch erkennen (hoechste Prioritaet = letzte Zeile ohne all/noarch)
-    ARCH=$(opkg print-architecture | grep -v "all" | grep -v "noarch" | tail -1 | awk '{print $2}')
-    if [ -z "$ARCH" ]; then
-        # Fallback: aus openwrt_release lesen
-        ARCH=$(grep "DISTRIB_ARCH" /etc/openwrt_release 2>/dev/null | cut -d"'" -f2)
-    fi
-    if [ -z "$ARCH" ]; then
-        error "Konnte Architektur nicht erkennen!"
-    fi
-
-    if ! grep -q "openwrt_base" /etc/opkg/customfeeds.conf 2>/dev/null; then
-        log "  Fuege OpenWRT Repository hinzu (Arch: $ARCH)..."
-        echo "src/gz openwrt_base https://downloads.openwrt.org/releases/21.02.0/packages/${ARCH}/base" >> /etc/opkg/customfeeds.conf
-    fi
-
-    # Paketlisten aktualisieren
-    log "  Aktualisiere Paketlisten..."
-    opkg update
-
-    # dnsmasq entfernen und dnsmasq-full installieren
-    log "  Ersetze dnsmasq durch dnsmasq-full..."
-    opkg remove dnsmasq --force-depends
-
-    if ! opkg install dnsmasq-full; then
-        error "dnsmasq-full Installation fehlgeschlagen! Restore backup..."
-        cp /etc/init.d/dnsmasq.backup /etc/init.d/dnsmasq 2>/dev/null || true
-        cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
-        exit 1
-    fi
-
-    # Restore config (aber NICHT init.d - das wird separat gepatcht)
-    cp /etc/config/dhcp.backup /etc/config/dhcp 2>/dev/null || true
-
-    log "  dnsmasq-full installiert"
-else
-    log "  dnsmasq hat bereits ipset Support"
-fi
-
-# dnsmasq init.d patchen (Teltonika nutzt anderen Pfad fuer OpenWRT packages)
-# Muss NACH Installation UND bei jedem Setup geprueft werden
-if [ -f /usr/local/usr/sbin/dnsmasq ]; then
-    # libubox Symlink erstellen falls noetig (neuere Teltonika Firmware hat andere Version)
-    # /lib ist read-only, also /usr/local/lib verwenden
-    # Ermittle welche Version dnsmasq braucht und welche vorhanden ist
-    LIBUBOX_NEEDED=$(ldd /usr/local/usr/sbin/dnsmasq 2>/dev/null | grep libubox | sed 's/.*libubox\.so\.\([0-9]*\).*/\1/' | head -1)
-    LIBUBOX_CURRENT=$(ls /lib/libubox.so.* 2>/dev/null | head -1)
-
-    if [ -n "$LIBUBOX_NEEDED" ] && [ -n "$LIBUBOX_CURRENT" ]; then
-        if [ ! -f /usr/local/lib/libubox.so.${LIBUBOX_NEEDED} ]; then
-            mkdir -p /usr/local/lib
-            ln -sf "$LIBUBOX_CURRENT" /usr/local/lib/libubox.so.${LIBUBOX_NEEDED}
-            log "  libubox Symlink erstellt: $LIBUBOX_CURRENT -> libubox.so.${LIBUBOX_NEEDED}"
-        fi
-    fi
-
-    # LD_LIBRARY_PATH fuer dnsmasq setzen
-    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
-
-    # Pruefen ob das Binary ipset Support hat
-    if /usr/local/usr/sbin/dnsmasq --version 2>&1 | grep -q " ipset"; then
-        if ! grep -q "/usr/local/usr/sbin/dnsmasq" /etc/init.d/dnsmasq 2>/dev/null; then
-            log "  Patche /etc/init.d/dnsmasq fuer dnsmasq-full Pfad..."
-            # Backup vor dem Patchen
-            cp /etc/init.d/dnsmasq /etc/init.d/dnsmasq.pre-patch 2>/dev/null || true
-            sed -i 's|PROG=/usr/sbin/dnsmasq|PROG=/usr/local/usr/sbin/dnsmasq|' /etc/init.d/dnsmasq
-
-            # LD_LIBRARY_PATH in init.d einfuegen falls nicht vorhanden
-            if ! grep -q "LD_LIBRARY_PATH" /etc/init.d/dnsmasq 2>/dev/null; then
-                sed -i '/^PROG=/a export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' /etc/init.d/dnsmasq
-                log "  LD_LIBRARY_PATH in init.d eingefuegt"
-            fi
-
-            # Flag fuer Reboot am Ende setzen
-            touch /tmp/.multivpn_needs_reboot
-            log "  init.d gepatcht - Reboot erforderlich"
-        fi
-    fi
+# nslookup sollte immer verfuegbar sein (BusyBox)
+if ! command -v nslookup >/dev/null 2>&1; then
+    error "nslookup nicht gefunden!"
 fi
 
 # =============================================================================
@@ -241,117 +147,120 @@ for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 
     fi
 done
 
-# Permissions fuer openvpn/wireguard User
 chmod 755 /etc/iproute2 2>/dev/null || true
 chmod 644 /etc/iproute2/rt_tables 2>/dev/null || true
 
 # =============================================================================
-# IPSETS ERSTELLEN
+# UPDATE-IPS SCRIPT ERSTELLEN (nslookup-basiert)
 # =============================================================================
 
-log "Erstelle ipsets..."
+log "Erstelle IP-Update Script..."
 
-# ipsets fuer jedes Land (basierend auf gefundenen Interfaces)
-for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
-    if is_our_tunnel "$iface"; then
-        country=$(get_country_from_iface "$iface")
-        ipset_name="${country}_ips"
-
-        if ! ipset list "$ipset_name" >/dev/null 2>&1; then
-            ipset create "$ipset_name" hash:ip timeout 3600
-            log "  ipset $ipset_name erstellt"
-        else
-            log "  ipset $ipset_name existiert bereits"
-        fi
-    fi
-done
-
-# =============================================================================
-# DNSMASQ KONFIGURATION
-# =============================================================================
-
-log "Konfiguriere dnsmasq..."
-
-# dnsmasq ipset Config in /root/multivpn erstellen (wird bei FW Update geloescht = sicher!)
-# WICHTIG: Nicht in /etc/dnsmasq.d/ direkt, sonst crasht dnsmasq nach FW Update
-DNSMASQ_IPSET_LOCAL="$SCRIPT_DIR/dnsmasq-ipset.conf"
-
-cat > "$DNSMASQ_IPSET_LOCAL" << 'DNSEOF'
-# Multi-VPN DNS-basiertes Routing
-# Domains werden bei DNS-Aufloesung in ipsets eingetragen
-
-# Deutsche Streaming Dienste -> de_ips
-ipset=/ardmediathek.de/daserste.de/ard.de/zdf.de/br.de/wdr.de/ndr.de/swr.de/mdr.de/hr.de/rbb-online.de/arte.tv/arte.de/joyn.de/de_ips
-ipset=/rtl.de/rtlplus.de/tvnow.de/prosieben.de/sat1.de/kabeleins.de/sportschau.de/de_ips
-
-# Schweizer Streaming Dienste -> ch_ips
-ipset=/srf.ch/play.srf.ch/playsuisse.ch/rts.ch/rsi.ch/rtr.ch/srgssr.ch/ch_ips
-ipset=/3plus.tv/tv24.ch/tv25.ch/s1.ch/ch_ips
-
-# Oesterreichische Streaming Dienste -> at_ips
-ipset=/orf.at/tvthek.orf.at/servustv.com/atv.at/puls4.com/puls24.at/at_ips
-ipset=/krone.at/krone.tv/oe24.at/oe24.tv/at_ips
-DNSEOF
-
-log "  dnsmasq ipset Config erstellt in $DNSMASQ_IPSET_LOCAL"
-
-# Symlink in /etc/dnsmasq.d erstellen
-# Bei FW Update: /root/multivpn wird geloescht -> Symlink ist broken -> dnsmasq ignoriert ihn
-mkdir -p /etc/dnsmasq.d
-ln -sf "$DNSMASQ_IPSET_LOCAL" /etc/dnsmasq.d/multivpn-ipset.conf
-log "  Symlink /etc/dnsmasq.d/multivpn-ipset.conf -> $DNSMASQ_IPSET_LOCAL"
-
-# Hotplug Script erstellen das bei Boot pruefen kann ob dnsmasq-full vorhanden
-# Falls nicht, wird der Symlink entfernt um Crash zu verhindern
-cat > /etc/hotplug.d/iface/99-multivpn-dnsmasq-check << 'HOTPLUGEOF'
+cat > "$SCRIPT_DIR/update-ips.sh" << 'UPDATEEOF'
 #!/bin/sh
-# Multi-VPN: Prueft ob dnsmasq ipset Support hat
-# Falls nicht, entferne die ipset Config um Crash zu verhindern
+#
+# RUTX Multi-VPN IP Update Script
+# ================================
+# Loest Streaming-Hostnames per nslookup auf und fuellt ipsets
+# Braucht KEIN dnsmasq-full!
+#
+# Verwendung:
+#   /root/multivpn/update-ips.sh          # Alle Laender
+#   /root/multivpn/update-ips.sh de       # Nur Deutschland
+#
+# Cronjob: 0 */4 * * * /root/multivpn/update-ips.sh
+#
 
-[ "$ACTION" = "ifup" ] && [ "$INTERFACE" = "lan" ] && {
-    DNSMASQ_CONF="/etc/dnsmasq.d/multivpn-ipset.conf"
+SCRIPT_DIR="/root/multivpn"
+DOMAINS_DIR="$SCRIPT_DIR/domains"
+LOG_TAG="multivpn-ipupdate"
 
-    # Wenn Symlink existiert aber Ziel nicht (= nach FW Update)
-    if [ -L "$DNSMASQ_CONF" ] && [ ! -e "$DNSMASQ_CONF" ]; then
-        logger -t multivpn "Broken symlink $DNSMASQ_CONF entfernt (nach FW Update?)"
-        rm -f "$DNSMASQ_CONF"
-        /etc/init.d/dnsmasq restart
-    fi
+log() {
+    logger -t "$LOG_TAG" "$1"
+    echo "[$(date '+%H:%M:%S')] $1"
+}
 
-    # Wenn Config existiert aber dnsmasq kein ipset Support hat
-    if [ -f "$DNSMASQ_CONF" ]; then
-        if /usr/sbin/dnsmasq --version 2>&1 | grep -q "no-ipset"; then
-            logger -t multivpn "dnsmasq hat kein ipset Support, entferne Config"
-            rm -f "$DNSMASQ_CONF"
-            /etc/init.d/dnsmasq restart
-        fi
+# DNS Lookup - gibt alle IPs fuer einen Hostname zurueck
+resolve_host() {
+    local host="$1"
+    nslookup "$host" 2>/dev/null | \
+        grep -E "^Address:" | \
+        tail -n +2 | \
+        awk '{print $2}' | \
+        grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# Hostnames aus Datei lesen (ignoriert Kommentare und leere Zeilen)
+get_hosts_from_file() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        grep -v '^#' "$file" | grep -v '^$' | tr -d ' '
     fi
 }
-HOTPLUGEOF
-chmod +x /etc/hotplug.d/iface/99-multivpn-dnsmasq-check
-log "  Hotplug Script fuer dnsmasq-Check erstellt"
 
-# dnsmasq soll conf-dir benutzen (UCI Methode fuer OpenWRT)
-if ! uci get dhcp.@dnsmasq[0].confdir >/dev/null 2>&1; then
-    uci set dhcp.@dnsmasq[0].confdir='/etc/dnsmasq.d'
-    uci commit dhcp
-    log "  dnsmasq confdir konfiguriert"
+# IPs fuer ein Land updaten
+update_country() {
+    local country="$1"
+    local country_lower=$(echo "$country" | tr 'A-Z' 'a-z')
+    local ipset_name="${country_lower}_ips"
+    local domain_file="$DOMAINS_DIR/${country_lower}_streaming.txt"
+
+    if [ ! -f "$domain_file" ]; then
+        log "WARNUNG: Domain-Datei nicht gefunden: $domain_file"
+        return 1
+    fi
+
+    # ipset erstellen falls nicht vorhanden (24h timeout)
+    if ! ipset list "$ipset_name" >/dev/null 2>&1; then
+        ipset create "$ipset_name" hash:ip timeout 86400
+        log "ipset $ipset_name erstellt"
+    fi
+
+    local host_count=0
+    local ip_count=0
+
+    for host in $(get_hosts_from_file "$domain_file"); do
+        host_count=$((host_count + 1))
+        for ip in $(resolve_host "$host"); do
+            ipset add "$ipset_name" "$ip" -exist 2>/dev/null
+            ip_count=$((ip_count + 1))
+        done
+    done
+
+    log "$country: $host_count Hosts aufgeloest, $ip_count IPs in $ipset_name"
+}
+
+# Hauptprogramm
+log "=== IP Update Start ==="
+
+# Welche Laender?
+if [ $# -eq 0 ]; then
+    COUNTRIES="de ch at"
+else
+    COUNTRIES="$*"
 fi
 
-# dnsmasq neu starten
-/etc/init.d/dnsmasq restart
-log "  dnsmasq neu gestartet"
+for country in $COUNTRIES; do
+    update_country "$country"
+done
+
+log "=== IP Update Ende ==="
+exit 0
+UPDATEEOF
+
+chmod +x "$SCRIPT_DIR/update-ips.sh"
+log "  update-ips.sh erstellt"
 
 # =============================================================================
-# VPN SWITCH SCRIPT ERSTELLEN (DYNAMISCH)
+# VPN CONTROL SCRIPT ERSTELLEN
 # =============================================================================
 
-log "Erstelle VPN Control Scripts..."
+log "Erstelle VPN Control Script..."
 
 cat > "$SCRIPT_DIR/vpn-control.sh" << 'VPNEOF'
 #!/bin/sh
 #
-# Multi-VPN Control Script (Dynamisch)
+# Multi-VPN Control Script
 # Usage: vpn-control.sh [on|off|status]
 #
 
@@ -362,38 +271,30 @@ TUNNEL_PREFIX="SS"
 RT_TABLE_BASE=110
 MARK_BASE=16
 
-# Lade Config (versuche beide Orte)
+# Lade Config
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
 [ -f "$SCRIPT_DIR/config" ] && . "$SCRIPT_DIR/config"
 
-# STREAMING_DEVICES muss gesetzt sein, sonst Warnung
 if [ -z "$STREAMING_DEVICES" ]; then
     echo "WARNUNG: Keine STREAMING_DEVICES konfiguriert!"
-    echo "Setze mit: /root/multivpn/manage-devices.sh set <IP>"
 fi
 
-# Extrahiert Laendercode aus Interface Name: SS_DE -> de, SS_DE2 -> de
 get_country_from_iface() {
-    # BusyBox tr braucht A-Z statt [:upper:]
     echo "$1" | sed 's/^SS_//' | sed 's/[0-9]*$//' | tr 'A-Z' 'a-z'
 }
 
-# Finde alle SS_* Interfaces
 get_our_interfaces() {
     uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | grep "^${TUNNEL_PREFIX}_" | sort -u
 }
 
-# Hole alle Laender (einfache Version ohne Pipe-Probleme)
 get_all_countries() {
     for iface in $(get_our_interfaces); do
         get_country_from_iface "$iface"
     done | sort -u
 }
 
-# Berechne Table fuer ein Land
 get_table_for_country() {
-    local country="$1"
-    case "$country" in
+    case "$1" in
         at) echo $((RT_TABLE_BASE + 0)) ;;
         ch) echo $((RT_TABLE_BASE + 1)) ;;
         de) echo $((RT_TABLE_BASE + 2)) ;;
@@ -401,10 +302,8 @@ get_table_for_country() {
     esac
 }
 
-# Berechne Mark fuer ein Land
 get_mark_for_country() {
-    local country="$1"
-    case "$country" in
+    case "$1" in
         at) printf "0x%x" $((MARK_BASE + 0)) ;;
         ch) printf "0x%x" $((MARK_BASE + 1)) ;;
         de) printf "0x%x" $((MARK_BASE + 2)) ;;
@@ -412,10 +311,8 @@ get_mark_for_country() {
     esac
 }
 
-# Berechne Mark dezimal fuer ein Land (fuer iptables)
 get_mark_dec_for_country() {
-    local country="$1"
-    case "$country" in
+    case "$1" in
         at) echo $((MARK_BASE + 0)) ;;
         ch) echo $((MARK_BASE + 1)) ;;
         de) echo $((MARK_BASE + 2)) ;;
@@ -423,10 +320,8 @@ get_mark_dec_for_country() {
     esac
 }
 
-# Interface Name fuer Land (uppercase)
 get_iface_for_country() {
-    local country="$1"
-    local country_upper=$(echo "$country" | tr 'a-z' 'A-Z')
+    local country_upper=$(echo "$1" | tr 'a-z' 'A-Z')
     echo "${TUNNEL_PREFIX}_${country_upper}"
 }
 
@@ -434,42 +329,42 @@ case "$1" in
     on)
         echo "Aktiviere Multi-VPN Routing..."
 
-        # Sammle alle Laender
         countries=$(get_all_countries)
 
-        # ipsets erstellen falls nicht vorhanden (ueberleben keinen Reboot!)
+        # ipsets erstellen (24h timeout)
         echo "  Erstelle ipsets..."
         for country in $countries; do
             ipset_name="${country}_ips"
             if ! ipset list "$ipset_name" >/dev/null 2>&1; then
-                ipset create "$ipset_name" hash:ip timeout 3600
+                ipset create "$ipset_name" hash:ip timeout 86400
                 echo "    ipset $ipset_name erstellt"
             fi
         done
 
-        # IP Rules aufsetzen
+        # IPs per nslookup auffuellen
+        echo "  Fuehre IP-Update aus..."
+        $SCRIPT_DIR/update-ips.sh
+
+        # IP Rules
         for country in $countries; do
             table=$(get_table_for_country "$country")
             mark=$(get_mark_for_country "$country")
-
             ip rule del fwmark $mark table $table 2>/dev/null || true
             ip rule add fwmark $mark table $table priority $table
             echo "  Rule: $country mark=$mark -> table=$table"
         done
 
-        # WireGuard Interfaces aktivieren
+        # WireGuard aktivieren
         for iface in $(get_our_interfaces); do
             echo "  Aktiviere: $iface"
             ifup "$iface" 2>/dev/null || true
         done
 
-        # Warte auf Tunnel
         sleep 3
 
-        # Routes in Tabellen setzen (erstes Interface pro Land)
+        # Routes setzen
         for country in $countries; do
             table=$(get_table_for_country "$country")
-            # Finde erstes Interface fuer dieses Land
             for iface in $(get_our_interfaces); do
                 iface_country=$(get_country_from_iface "$iface")
                 if [ "$iface_country" = "$country" ]; then
@@ -482,25 +377,23 @@ case "$1" in
             done
         done
 
-        # FORWARD Regeln fuer markierten Traffic (VPN Tunnel)
+        # FORWARD Regeln
         echo "  Erstelle FORWARD Regeln..."
         for country in $countries; do
             mark_dec=$(get_mark_dec_for_country "$country")
             iface=$(get_iface_for_country "$country")
-            # Pruefe ob Regel existiert, sonst hinzufuegen
             if ! iptables -C FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT 2>/dev/null; then
                 iptables -I FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT
                 echo "    FORWARD br-lan -> $iface (mark $mark_dec)"
             fi
         done
 
-        # iptables mangle Regeln aktivieren (Source IP + Destination ipset)
+        # iptables MARK Regeln
         echo "  Erstelle iptables MARK Regeln..."
         for IP in $STREAMING_DEVICES; do
             for country in $countries; do
                 ipset_name="${country}_ips"
                 mark=$(get_mark_for_country "$country")
-
                 if ipset list "$ipset_name" >/dev/null 2>&1; then
                     iptables -t mangle -C PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark 2>/dev/null || \
                     iptables -t mangle -A PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark
@@ -514,7 +407,6 @@ case "$1" in
     off)
         echo "Deaktiviere Multi-VPN Routing..."
 
-        # Sammle alle Laender
         countries=$(get_all_countries)
 
         # FORWARD Regeln entfernen
@@ -524,12 +416,11 @@ case "$1" in
             iptables -D FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT 2>/dev/null || true
         done
 
-        # iptables mangle Regeln entfernen
+        # iptables MARK entfernen
         for IP in $STREAMING_DEVICES; do
             for country in $countries; do
                 ipset_name="${country}_ips"
                 mark=$(get_mark_for_country "$country")
-
                 iptables -t mangle -D PREROUTING -s $IP -m set --match-set $ipset_name dst -j MARK --set-mark $mark 2>/dev/null || true
             done
         done
@@ -541,7 +432,7 @@ case "$1" in
             ip rule del fwmark $mark table $table 2>/dev/null || true
         done
 
-        # WireGuard Interfaces deaktivieren
+        # WireGuard deaktivieren
         for iface in $(get_our_interfaces); do
             echo "  Deaktiviere: $iface"
             ifdown "$iface" 2>/dev/null || true
@@ -551,44 +442,30 @@ case "$1" in
         ;;
 
     status)
-        # JSON Status ausgeben
         tunnels_json="{"
         first=1
         for iface in $(get_our_interfaces); do
             country=$(get_country_from_iface "$iface" | tr 'a-z' 'A-Z')
             up="false"
             wg show "$iface" >/dev/null 2>&1 && up="true"
-
-            if [ $first -eq 1 ]; then
-                first=0
-            else
-                tunnels_json="$tunnels_json,"
-            fi
+            [ $first -eq 1 ] && first=0 || tunnels_json="$tunnels_json,"
             tunnels_json="$tunnels_json\"$iface\":$up"
         done
         tunnels_json="$tunnels_json}"
 
-        # ipset counts
         ipset_json="{"
         first=1
         for iface in $(get_our_interfaces); do
             country=$(get_country_from_iface "$iface")
             ipset_name="${country}_ips"
             count=$(ipset list "$ipset_name" 2>/dev/null | grep -c "^[0-9]" || echo 0)
-
-            # Nur einmal pro Land
             if ! echo "$ipset_json" | grep -q "\"$country\""; then
-                if [ $first -eq 1 ]; then
-                    first=0
-                else
-                    ipset_json="$ipset_json,"
-                fi
+                [ $first -eq 1 ] && first=0 || ipset_json="$ipset_json,"
                 ipset_json="$ipset_json\"$country\":$count"
             fi
         done
         ipset_json="$ipset_json}"
 
-        # Pruefen ob Routing aktiv
         routing_active="false"
         ip rule show | grep -q "fwmark 0x1" && routing_active="true"
 
@@ -624,11 +501,22 @@ cat > "$SCRIPT_DIR/manage-devices.sh" << 'DEVEOF'
 #
 
 SCRIPT_DIR="/root/multivpn"
-CONFIG_FILE="$SCRIPT_DIR/config"
+CONFIG_DIR="/etc/config/multivpn"
+CONFIG_FILE="$CONFIG_DIR/config"
 
-# Lade Config
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+[ -f "$SCRIPT_DIR/config" ] && . "$SCRIPT_DIR/config"
 STREAMING_DEVICES="${STREAMING_DEVICES:-}"
+
+save_config() {
+    mkdir -p "$CONFIG_DIR"
+    cat > "$CONFIG_FILE" << EOF
+# Multi-VPN Konfiguration (persistent)
+STREAMING_DEVICES="$STREAMING_DEVICES"
+EOF
+    # Auch nach SCRIPT_DIR kopieren
+    cp "$CONFIG_FILE" "$SCRIPT_DIR/config" 2>/dev/null || true
+}
 
 case "$1" in
     list)
@@ -641,20 +529,20 @@ case "$1" in
         else
             STREAMING_DEVICES="$STREAMING_DEVICES $2"
             STREAMING_DEVICES=$(echo "$STREAMING_DEVICES" | xargs)
-            echo "STREAMING_DEVICES=\"$STREAMING_DEVICES\"" > "$CONFIG_FILE"
+            save_config
             echo "Device $2 hinzugefuegt"
         fi
         ;;
     remove)
         [ -z "$2" ] && echo "Usage: $0 remove <IP>" && exit 1
         STREAMING_DEVICES=$(echo "$STREAMING_DEVICES" | sed "s/$2//g" | xargs)
-        echo "STREAMING_DEVICES=\"$STREAMING_DEVICES\"" > "$CONFIG_FILE"
+        save_config
         echo "Device $2 entfernt"
         ;;
     set)
         shift
         STREAMING_DEVICES="$*"
-        echo "STREAMING_DEVICES=\"$STREAMING_DEVICES\"" > "$CONFIG_FILE"
+        save_config
         echo "Devices gesetzt: $STREAMING_DEVICES"
         ;;
     *)
@@ -667,12 +555,11 @@ chmod +x "$SCRIPT_DIR/manage-devices.sh"
 log "  manage-devices.sh erstellt"
 
 # =============================================================================
-# FIREWALL ZONE FUER VPN (DYNAMISCH)
+# FIREWALL ZONE FUER VPN
 # =============================================================================
 
 log "Konfiguriere Firewall..."
 
-# Sammle alle unsere Interfaces fuer die Firewall Zone
 our_interfaces=""
 for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 | cut -d'=' -f1 | sort -u); do
     if is_our_tunnel "$iface"; then
@@ -680,7 +567,6 @@ for iface in $(uci show network 2>/dev/null | grep "=interface" | cut -d'.' -f2 
     fi
 done
 
-# Pruefen ob vpn Zone existiert
 if ! uci get firewall.vpn_zone >/dev/null 2>&1; then
     uci set firewall.vpn_zone=zone
     uci set firewall.vpn_zone.name='vpn'
@@ -700,7 +586,6 @@ else
     log "  VPN Firewall Zone existiert"
 fi
 
-# Forwarding von LAN zu VPN
 if ! uci show firewall | grep -q "lan_vpn_forward"; then
     uci set firewall.lan_vpn_forward=forwarding
     uci set firewall.lan_vpn_forward.src='lan'
@@ -710,28 +595,40 @@ if ! uci show firewall | grep -q "lan_vpn_forward"; then
 fi
 
 # =============================================================================
+# CRONJOB FUER IP-UPDATE
+# =============================================================================
+
+log "Konfiguriere Cronjob fuer IP-Updates..."
+
+CRON_ENTRY="0 */4 * * * /root/multivpn/update-ips.sh"
+
+# Cronjob hinzufuegen falls nicht vorhanden
+if ! crontab -l 2>/dev/null | grep -q "update-ips.sh"; then
+    (crontab -l 2>/dev/null; echo "$CRON_ENTRY") | crontab -
+    log "  Cronjob hinzugefuegt (alle 4 Stunden)"
+else
+    log "  Cronjob bereits vorhanden"
+fi
+
+# =============================================================================
 # RC.LOCAL AUTOSTART
 # =============================================================================
 
 log "Konfiguriere Autostart..."
 
-# rc.local fuer automatischen Start nach Reboot
 RC_LOCAL_ENTRY="/root/multivpn/vpn-control.sh on"
 
 if [ -f /etc/rc.local ]; then
-    # Pruefen ob Eintrag bereits existiert
     if ! grep -q "multivpn/vpn-control.sh" /etc/rc.local; then
-        # Vor exit 0 einfuegen
         sed -i "/^exit 0/i # Multi-VPN Autostart\n$RC_LOCAL_ENTRY\n" /etc/rc.local
         log "  rc.local Autostart hinzugefuegt"
     else
         log "  rc.local Autostart bereits vorhanden"
     fi
 else
-    # rc.local erstellen
     cat > /etc/rc.local << 'RCEOF'
 #!/bin/sh
-# rc.local - Wird nach dem Booten ausgefuehrt
+# rc.local
 
 # Multi-VPN Autostart
 /root/multivpn/vpn-control.sh on
@@ -743,18 +640,19 @@ RCEOF
 fi
 
 # =============================================================================
-# CONFIG NACH /etc/config/multivpn KOPIEREN
+# CONFIG SPEICHERN
 # =============================================================================
 
-log "Kopiere Config nach $CONFIG_DIR..."
+log "Speichere Config..."
 
-# Config Datei in persistentes Verzeichnis kopieren
 if [ -n "$STREAMING_DEVICES" ]; then
+    mkdir -p "$CONFIG_DIR"
     cat > "$CONFIG_FILE" << CONFEOF
 # Multi-VPN Konfiguration (persistent)
 STREAMING_DEVICES="$STREAMING_DEVICES"
 CONFEOF
-    log "  Config nach $CONFIG_FILE geschrieben"
+    cp "$CONFIG_FILE" "$SCRIPT_DIR/config" 2>/dev/null || true
+    log "  Config gespeichert in $CONFIG_FILE"
 fi
 
 # =============================================================================
@@ -770,26 +668,18 @@ for iface in $our_interfaces; do
     log "  - $iface ($country)"
 done
 log ""
+log "KEIN dnsmasq-full noetig!"
+log "IPs werden per nslookup aufgeloest (Cronjob alle 4h)"
+log ""
 log "Config Verzeichnis: $CONFIG_DIR (ueberlebt Firmware Updates)"
 log ""
 log "Naechste Schritte:"
 log "  1. vpn-control.sh on  - Routing aktivieren"
 log "  2. vpn-control.sh off - Routing deaktivieren"
 log "  3. vpn-control.sh status - Status anzeigen"
+log "  4. update-ips.sh      - IPs manuell aktualisieren"
 log ""
 log "Autostart: VPN Routing wird nach Reboot automatisch aktiviert"
 log ""
-
-# =============================================================================
-# REBOOT (falls dnsmasq-full installiert wurde)
-# =============================================================================
-
-if [ -f /tmp/.multivpn_needs_reboot ]; then
-    rm -f /tmp/.multivpn_needs_reboot
-    log "HINWEIS: dnsmasq-full wurde installiert."
-    log "         System wird in 5 Sekunden neu gestartet..."
-    sleep 5
-    reboot
-fi
 
 exit 0

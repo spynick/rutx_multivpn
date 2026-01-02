@@ -1,6 +1,47 @@
 # Deutsche Streaming Dienste
 # Format: Eine Domain pro Zeile
-# Wird von dnsmasq genutzt um IPs in ipset "german_ips" zu fuellen
+# Verwendet fuer nslookup -> ipset
+
+# ========================================
+# CDN Hostnames (Live Streams)
+# ========================================
+
+# ARD CDN (Akamai + eigene)
+mcdn.br.de
+brlive-lh.akamaihd.net
+derste247liveint.akamaized.net
+daserste-live.ard-mcdn.de
+wdr-live.ard-mcdn.de
+ndrint.akamaized.net
+mcdn.ndr.de
+rbb-hls-berlin.akamaized.net
+rbb-hls-brandenburg.akamaized.net
+swrswr3vr-hls.akamaized.net
+swrbwd-hls.akamaized.net
+swrrpd-hls.akamaized.net
+mdrtvsnhls.akamaized.net
+mdrtvsahls.akamaized.net
+mdrtvthhls.akamaized.net
+
+# ZDF CDN (Akamai)
+zdf-hls-15.akamaized.net
+zdf-hls-16.akamaized.net
+zdf-hls-17.akamaized.net
+zdf-hls-18.akamaized.net
+zdf-hls-19.akamaized.net
+tagesschau.akamaized.net
+
+# Arte CDN
+artesimulcast.akamaized.net
+
+# Deutsche Welle
+dwamdstream102.akamaized.net
+dwamdstream103.akamaized.net
+dwamdstream104.akamaized.net
+
+# ========================================
+# Website Domains (Mediatheken)
+# ========================================
 
 # ARD Mediathek + Infrastruktur
 ardmediathek.de

@@ -1,6 +1,39 @@
 # Oesterreichische Streaming Dienste
 # Format: Eine Domain pro Zeile
-# Wird von dnsmasq genutzt um IPs in ipset "austrian_ips" zu fuellen
+# Verwendet fuer nslookup -> ipset
+
+# ========================================
+# CDN Hostnames (Live Streams)
+# ========================================
+
+# ORF CDN (ORS = Oesterreichische Rundfunksender)
+orf1.mdn.ors.at
+orf2.mdn.ors.at
+orf3.mdn.ors.at
+orfsport.mdn.ors.at
+orfkids.mdn.ors.at
+orf2-247.mdn.ors.at
+web12.mdn.ors.at
+studiocam-oe3.mdn.ors.at
+
+# ServusTV CDN (Akamai)
+liveservustv-i.akamaihd.net
+stv-live.akamaized.net
+
+# Red Bull TV CDN
+rbmn-live.akamaized.net
+
+# Huberwebmedia (diverse AT Sender)
+streaming13.huberwebmedia.at
+streaming14.huberwebmedia.at
+streaming10.huberwebmedia.at
+
+# W24 Wien
+ms01.w24.at
+
+# ========================================
+# Website Domains (Mediatheken)
+# ========================================
 
 # ORF (Oesterreichischer Rundfunk)
 orf.at

@@ -1,6 +1,38 @@
 # Schweizer Streaming Dienste
 # Format: Eine Domain pro Zeile
-# Wird von dnsmasq genutzt um IPs in ipset "swiss_ips" zu fuellen
+# Verwendet fuer nslookup -> ipset
+
+# ========================================
+# CDN Hostnames (Live Streams)
+# ========================================
+
+# SRG/SRF/RTS/RSI Haupthost (Netplus)
+viamotionhsi.netplus.ch
+
+# SRF Akamai CDN
+srf1-lsvs.akamaized.net
+srf-live.akamaized.net
+
+# Infomaniak CDN (diverse CH Sender)
+vedge.infomaniak.com
+livehd.vedge.infomaniak.com
+canalalpha.vedge.infomaniak.com
+canalalphaju.vedge.infomaniak.com
+livevideo.infomaniak.com
+
+# RTS (Couleur 3)
+rtsc3video.akamaized.net
+
+# Kaltura CDN (TeleZueri, Tele1, etc.)
+cdnapisec.kaltura.com
+klive.kaltura.com
+
+# SRG Integration Layer / API
+il.srgssr.ch
+
+# ========================================
+# Website Domains (Mediatheken)
+# ========================================
 
 # SRF (Schweizer Radio und Fernsehen)
 srf.ch
