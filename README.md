@@ -1,16 +1,16 @@
 # RUTX Multi-VPN - DNS-basiertes Split-Tunneling
 
-DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Routern.
+DNS-basiertes Multi-Tunnel Split-Tunneling für Streaming auf Teltonika RUTX Routern.
 
-**Keine zusaetzlichen Pakete erforderlich** - funktioniert mit Standard-Firmware!
+**Keine zusätzlichen Pakete erforderlich** - funktioniert mit Standard-Firmware!
 
 ## Features
 
 - **Automatisches Geo-Routing**: ARD/ZDF -> DE Tunnel, SRF -> CH Tunnel, ORF -> AT Tunnel
-- **Nur Streaming Devices**: Normale Geraete gehen direkt ins Internet
+- **Nur Streaming Devices**: Normale Geräte gehen direkt ins Internet
 - **Mehrere Tunnel gleichzeitig**: WireGuard DE, CH, AT laufen parallel
-- **Firmware-Update sicher**: Keine opkg-Pakete, ueberlebt Updates
-- **Multi-Device Support**: Beliebig viele Streaming-Geraete (Komma, Semikolon oder Leerzeichen getrennt)
+- **Firmware-Update sicher**: Keine opkg-Pakete, überlebt Updates
+- **Multi-Device Support**: Beliebig viele Streaming-Geräte (Komma, Semikolon oder Leerzeichen getrennt)
 - **Management VPN Schutz**: WG/MGMT/HOME/VPN Interfaces werden NIEMALS angefasst
 - **Home Assistant Integration**: Ein/Aus Schalter, Status mit Flaggen-Emojis, Provisioning Buttons
 
@@ -23,7 +23,7 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 |   +----------------+     +----------------+     +----------------+ |
 |   |   SS_DE        |     |   SS_CH        |     |   SS_AT        | |
 |   |   WireGuard    |     |   WireGuard    |     |   WireGuard    | |
-|   |   -> Frankfurt |     |   -> Zuerich   |     |   -> Wien      | |
+|   |   -> Frankfurt |     |   -> Zürich   |     |   -> Wien      | |
 |   +-------+--------+     +-------+--------+     +-------+--------+ |
 |           |                      |                      |          |
 |           +----------------------+----------------------+          |
@@ -72,7 +72,7 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 ## Datenfluss
 
 ```
-1. Cronjob (alle 30 Min) loest Streaming-Domains per nslookup auf
+1. Cronjob (alle 30 Min) löst Streaming-Domains per nslookup auf
                     |
                     v
 2. IPs werden in ipsets gespeichert (de_ips, ch_ips, at_ips)
@@ -83,9 +83,9 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
                     |
                     v
 4. iptables PREROUTING:
-   - Prueft Source IP (ist es Streaming Device?)
-   - Prueft Destination IP (ist sie in de_ips/ch_ips/at_ips?)
-   - Setzt MARK (0x12 fuer DE, 0x11 fuer CH, 0x10 fuer AT)
+   - Prüft Source IP (ist es Streaming Device?)
+   - Prüft Destination IP (ist sie in de_ips/ch_ips/at_ips?)
+   - Setzt MARK (0x12 für DE, 0x11 für CH, 0x10 für AT)
                     |
                     v
 5. ip rule: MARK 0x12 -> verwende Routing Table 112
@@ -104,15 +104,15 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 
 ### Surfshark Account
 
-Du brauchst einen Surfshark Account mit WireGuard-Unterstuetzung:
+Du brauchst einen Surfshark Account mit WireGuard-Unterstützung:
 
 1. **Surfshark Login**: https://my.surfshark.com/
 2. **Manual Setup** -> **Router** -> **WireGuard**
 3. **Generate Key Pair** (oder vorhandenes verwenden)
-4. **Location waehlen**:
+4. **Location wählen**:
    - Deutschland (z.B. Frankfurt)
-   - Schweiz (z.B. Zuerich)
-   - Oesterreich (z.B. Wien)
+   - Schweiz (z.B. Zürich)
+   - österreich (z.B. Wien)
 5. **Config herunterladen**
 
 ### WireGuard Config Format
@@ -152,8 +152,8 @@ Surfshark WireGuard Configs in `profiles/` ablegen:
 ```
 profiles/
   wg_DE_surfshark.conf   # Deutschland (Frankfurt)
-  wg_CH_surfshark.conf   # Schweiz (Zuerich)
-  wg_AT_surfshark.conf   # Oesterreich (Wien)
+  wg_CH_surfshark.conf   # Schweiz (Zürich)
+  wg_AT_surfshark.conf   # österreich (Wien)
 ```
 
 **Namenskonvention**: `wg_<LAND>_<provider>.conf`
@@ -174,7 +174,7 @@ homeassistant:
 ./scripts/setup_ssh_key.sh 192.168.110.1
 ```
 
-Oder manuell:
+Oder manüll:
 ```bash
 # Auf HA
 ssh-keygen -t rsa -b 4096 -f /config/.ssh/id_rsa -N ""
@@ -189,23 +189,23 @@ ssh-copy-id -i /config/.ssh/id_rsa root@192.168.110.1
 2. **Streaming Device IPs**: `input_text.rutx_multivpn_streaming_devices`
    - Trennzeichen: Komma, Semikolon oder Leerzeichen
    - Beispiel: `192.168.110.100, 192.168.110.101, 192.168.110.102`
-3. **Button "Setup" druecken** - Initiales Provisioning
+3. **Button "Setup" drücken** - Initiales Provisioning
 4. **Toggle "Multi-VPN" einschalten**
 
 ## Lovelace Dashboard
 
 Kopiere den Inhalt von `lovelace_card.txt` in dein Dashboard.
 
-**Benoetigt**: `custom:button-card` (via HACS installieren)
+**Benötigt**: `custom:button-card` (via HACS installieren)
 
 Features:
-- Flaggen-Emojis fuer Tunnel-Status
+- Flaggen-Emojis für Tunnel-Status
 - IP-Counter pro Land
 - Setup/Refresh/Diagnose/Cleanup Buttons
 
 ## Persistenz
 
-### Was ueberlebt Firmware-Updates
+### Was überlebt Firmware-Updates
 
 - WireGuard Interface Konfiguration (UCI)
 - Routing Tabellen in `/etc/iproute2/rt_tables`
@@ -218,9 +218,9 @@ Features:
 
 - ipsets (mit IPs aus nslookup)
 - iptables MARK Regeln
-- ip rules fuer Policy Routing
+- ip rules für Policy Routing
 
-**Keine opkg-Pakete noetig!** Das System verwendet nur Standard-Tools:
+**Keine opkg-Pakete nötig!** Das System verwendet nur Standard-Tools:
 - `nslookup` (BusyBox)
 - `ipset` (Standard in OpenWrt)
 - `iptables` (Standard)
@@ -256,7 +256,7 @@ tvthek.orf.at
 # ... und CDN-Server
 ```
 
-**Tipp**: Weitere Domains hinzufuegen wenn ein Dienst nicht funktioniert!
+**Tipp**: Weitere Domains hinzufügen wenn ein Dienst nicht funktioniert!
 
 ## Home Assistant Entities
 
@@ -283,14 +283,14 @@ tvthek.orf.at
 
 | Button | Beschreibung |
 |--------|-------------|
-| Setup | Initial Setup ausfuehren |
+| Setup | Initial Setup ausführen |
 | Refresh | Status aktualisieren |
-| Diagnose | Ausfuehrliche Diagnose |
-| Cleanup | Konfiguration entfernen (mit Bestaetigung) |
+| Diagnose | Ausführliche Diagnose |
+| Cleanup | Konfiguration entfernen (mit Bestätigung) |
 
 ## Troubleshooting
 
-### SSH Verbindung pruefen
+### SSH Verbindung prüfen
 
 ```bash
 ssh -i /config/.ssh/id_rsa root@192.168.110.1 "echo OK"
@@ -302,7 +302,7 @@ ssh -i /config/.ssh/id_rsa root@192.168.110.1 "echo OK"
 ssh root@RUTX_IP "/root/multivpn/vpn-control.sh status"
 ```
 
-### ipset Inhalt pruefen
+### ipset Inhalt prüfen
 
 ```bash
 # Alle IPs im deutschen ipset anzeigen
@@ -312,13 +312,13 @@ ssh root@RUTX_IP "ipset list de_ips"
 ssh root@RUTX_IP "ipset list de_ips | grep -c '^[0-9]'"
 ```
 
-### IP-Update manuell ausfuehren
+### IP-Update manüll ausführen
 
 ```bash
 ssh root@RUTX_IP "/root/multivpn/update-ips.sh"
 ```
 
-### iptables Regeln pruefen
+### iptables Regeln prüfen
 
 ```bash
 # MARK Regeln (Streaming Device -> ipset match)
@@ -332,7 +332,7 @@ Erwartete Ausgabe (3 Regeln pro Streaming Device):
 0     0 MARK  all  --  *  *  192.168.110.100  0.0.0.0/0  match-set de_ips dst MARK set 0x12
 ```
 
-### WireGuard Tunnel pruefen
+### WireGuard Tunnel prüfen
 
 ```bash
 # Tunnel-Status
@@ -342,49 +342,49 @@ ssh root@RUTX_IP "wg show"
 ssh root@RUTX_IP "wg show SS_DE | grep transfer"
 ```
 
-### Routing pruefen
+### Routing prüfen
 
 ```bash
 # Routing Rules
 ssh root@RUTX_IP "ip rule show"
 
-# Routing Table fuer DE (112)
+# Routing Table für DE (112)
 ssh root@RUTX_IP "ip route show table 112"
 ```
 
 ### Streaming funktioniert nicht?
 
-1. **Pruefe ob Device in iptables**:
+1. **Prüfe ob Device in iptables**:
    ```bash
    ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep DEINE_IP"
    ```
 
-2. **Pruefe ob Domain aufgeloest wurde**:
+2. **Prüfe ob Domain aufgelöst wurde**:
    ```bash
    ssh root@RUTX_IP "ipset test de_ips IP_DER_STREAMING_SEITE"
    ```
 
-3. **Pruefe VPN-Traffic**:
+3. **Prüfe VPN-Traffic**:
    ```bash
    ssh root@RUTX_IP "wg show SS_DE"
    ```
    -> `transfer: X received, Y sent` sollte steigen
 
-4. **Manuelles IP-Update**:
+4. **Manülles IP-Update**:
    ```bash
    ssh root@RUTX_IP "/root/multivpn/update-ips.sh"
    ```
 
 ### VPN Provider blockt Streaming?
 
-Manche Streaming-Dienste erkennen VPN-Server. Loesungen:
-- Anderen Surfshark Server waehlen
+Manche Streaming-Dienste erkennen VPN-Server. Lösungen:
+- Anderen Surfshark Server wählen
 - Anderen VPN-Provider testen
 - Eigenen VPN-Server aufsetzen
 
 ## Sicherheit
 
-### Geschuetzte Management VPNs
+### Geschützte Management VPNs
 
 Folgende Interface-Namen werden **NIEMALS** angefasst:
 - `WG` / `wg`
@@ -397,7 +397,7 @@ Folgende Interface-Namen werden **NIEMALS** angefasst:
 Alle Streaming Tunnel verwenden das Prefix `SS_`:
 - `SS_DE` - Deutschland
 - `SS_CH` - Schweiz
-- `SS_AT` - Oesterreich
+- `SS_AT` - österreich
 
 ## Dateien
 
@@ -427,30 +427,30 @@ rutx_multivpn/
 
 ### Warum kein dnsmasq-full mehr?
 
-Die frueheren Versionen verwendeten `dnsmasq-full` mit ipset-Support. Problem:
+Die früheren Versionen verwendeten `dnsmasq-full` mit ipset-Support. Problem:
 - Muss via `opkg install` installiert werden
 - Geht bei jedem Firmware-Update verloren
 - Router crashte manchmal nach Updates
 
-Die neue Version verwendet `nslookup` + Cronjob - keine zusaetzlichen Pakete noetig!
+Die neü Version verwendet `nslookup` + Cronjob - keine zusätzlichen Pakete nötig!
 
 ### Wie oft werden IPs aktualisiert?
 
 Alle 30 Minuten via Cronjob. Die IPs haben ein 24h Timeout im ipset.
 
-### Kann ich mehr als 3 Laender hinzufuegen?
+### Kann ich mehr als 3 Länder hinzufügen?
 
 Ja! Dazu musst du:
-1. Neue WireGuard Config: `profiles/wg_XX_surfshark.conf`
-2. Neue Domain-Liste: `domains/xx_streaming.txt`
-3. Setup Script anpassen (neue Routing Table, neues ipset)
+1. Neü WireGuard Config: `profiles/wg_XX_surfshark.conf`
+2. Neü Domain-Liste: `domains/xx_streaming.txt`
+3. Setup Script anpassen (neü Routing Table, neüs ipset)
 
 ### Funktioniert das auch mit anderen VPN-Providern?
 
-Ja, solange sie WireGuard unterstuetzen. Die Config muss nur im richtigen Format sein.
+Ja, solange sie WireGuard unterstützen. Die Config muss nur im richtigen Format sein.
 
 ### Mein normales Internet ist langsamer geworden?
 
-Das sollte nicht passieren! Nur Traffic von den Streaming Devices zu den Streaming-IPs geht durch VPN. Pruefe:
+Das sollte nicht passieren! Nur Traffic von den Streaming Devices zu den Streaming-IPs geht durch VPN. Prüfe:
 - Ist dein PC in der Streaming Devices Liste? -> Rausnehmen!
 - iptables-Regeln korrekt? -> `iptables -t mangle -L PREROUTING -v -n`
