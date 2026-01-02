@@ -45,6 +45,20 @@ fi
 SSH_KEY="${SSH_KEY:-/config/.ssh/id_rsa}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes"
 
+# HA API Token (Long-Lived Access Token "RUTX-VPN")
+# Token wird aus Datei gelesen, Fallback auf SUPERVISOR_TOKEN
+HA_API_TOKEN_FILE="/config/.ha_api_token"
+if [ -f "$HA_API_TOKEN_FILE" ]; then
+    HA_API_TOKEN=$(cat "$HA_API_TOKEN_FILE")
+elif [ -n "$SUPERVISOR_TOKEN" ]; then
+    HA_API_TOKEN="$SUPERVISOR_TOKEN"
+else
+    HA_API_TOKEN=""
+fi
+
+# HA API URL (lokal in HA)
+HA_API_URL="http://supervisor/core/api"
+
 # Unser Tunnel Prefix (Streaming = SS)
 TUNNEL_PREFIX="SS"
 
@@ -56,8 +70,26 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
 
+# Notification bei Fehler senden
+send_error_notification() {
+    local message="$1"
+
+    # Ohne Token keine Notification
+    [ -z "$HA_API_TOKEN" ] && return 0
+
+    message=$(echo "$message" | sed 's/"/\\"/g')
+
+    curl -s -X POST \
+        -H "Authorization: Bearer ${HA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\": \"Multi-VPN Setup fehlgeschlagen\", \"message\": \"$message\", \"notification_id\": \"multivpn_provision\"}" \
+        "${HA_API_URL}/services/persistent_notification/create" \
+        >/dev/null 2>&1
+}
+
 error() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
+    send_error_notification "$1"
     exit 1
 }
 
@@ -251,15 +283,43 @@ log ""
 log "=== Provisioning abgeschlossen! ==="
 log ""
 log "Konfigurierte Tunnel:"
+TUNNEL_LIST=""
 for country in $PROFILE_LIST; do
     iface_name=$(get_interface_name "$country")
     log "  - $iface_name ($country)"
+    TUNNEL_LIST="$TUNNEL_LIST$iface_name, "
 done
+TUNNEL_LIST=$(echo "$TUNNEL_LIST" | sed 's/, $//')
 log ""
 log "Naechste Schritte:"
 log "  1. In Home Assistant: Multi-VPN aktivieren"
 log "  2. vpn-control.sh on  - Routing aktivieren"
 log "  3. vpn-control.sh off - Routing deaktivieren"
 log ""
+
+# =============================================================================
+# HA Notification senden
+# =============================================================================
+
+send_notification() {
+    local title="$1"
+    local message="$2"
+    local notification_id="${3:-multivpn_provision}"
+
+    # Ohne Token keine Notification
+    [ -z "$HA_API_TOKEN" ] && return 0
+
+    message=$(echo "$message" | sed ':a;N;$!ba;s/\n/\\n/g' | sed 's/"/\\"/g')
+
+    curl -s -X POST \
+        -H "Authorization: Bearer ${HA_API_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"title\": \"$title\", \"message\": \"$message\", \"notification_id\": \"$notification_id\"}" \
+        "${HA_API_URL}/services/persistent_notification/create" \
+        >/dev/null 2>&1
+}
+
+NOTIFY_MSG="**Tunnel:** $TUNNEL_LIST\n\n**Streaming Devices:** $STREAMING_DEVICES\n\nMulti-VPN kann jetzt aktiviert werden."
+send_notification "Multi-VPN Setup erfolgreich" "$NOTIFY_MSG" "multivpn_provision"
 
 exit 0
