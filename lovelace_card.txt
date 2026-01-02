@@ -24,21 +24,86 @@ cards:
         icon: mdi:vpn
         secondary_info: last-changed
 
-  # Tunnel Status
-  - type: glance
-    title: Tunnel Status
-    columns: 3
-    show_state: true
-    entities:
-      - entity: sensor.rutx_multi_vpn_tunnel_de
+  # Tunnel Status - mit custom:button-card fuer Flaggen
+  # OPTION A: Mit custom:button-card (empfohlen - muss installiert sein via HACS)
+  - type: horizontal-stack
+    cards:
+      - type: custom:button-card
+        entity: sensor.rutx_multi_vpn_tunnel_de
         name: Deutschland
-        icon: mdi:flag
-      - entity: sensor.rutx_multi_vpn_tunnel_ch
+        show_state: true
+        show_icon: true
+        icon: |
+          [[[
+            return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+          ]]]
+        styles:
+          icon:
+            - color: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? '#FFCC00' : 'rgba(255,0,0,0.4)';
+                ]]]
+            - width: 40px
+          card:
+            - background: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                ]]]
+      - type: custom:button-card
+        entity: sensor.rutx_multi_vpn_tunnel_ch
         name: Schweiz
-        icon: mdi:flag
-      - entity: sensor.rutx_multi_vpn_tunnel_at
+        show_state: true
+        show_icon: true
+        icon: |
+          [[[
+            return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+          ]]]
+        styles:
+          icon:
+            - color: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? '#FF0000' : 'rgba(255,0,0,0.4)';
+                ]]]
+            - width: 40px
+          card:
+            - background: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                ]]]
+      - type: custom:button-card
+        entity: sensor.rutx_multi_vpn_tunnel_at
         name: Oesterreich
-        icon: mdi:flag
+        show_state: true
+        show_icon: true
+        icon: |
+          [[[
+            return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+          ]]]
+        styles:
+          icon:
+            - color: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? '#EF3340' : 'rgba(255,0,0,0.4)';
+                ]]]
+            - width: 40px
+          card:
+            - background: |
+                [[[
+                  return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                ]]]
+
+  # OPTION B: Ohne custom:button-card (Standard glance - weniger huebsch aber funktioniert)
+  # - type: glance
+  #   title: Tunnel Status
+  #   columns: 3
+  #   show_state: true
+  #   entities:
+  #     - entity: sensor.rutx_multi_vpn_tunnel_de
+  #       name: Deutschland
+  #     - entity: sensor.rutx_multi_vpn_tunnel_ch
+  #       name: Schweiz
+  #     - entity: sensor.rutx_multi_vpn_tunnel_at
+  #       name: Oesterreich
 
   # ipset Counts
   - type: glance

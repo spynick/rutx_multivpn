@@ -85,24 +85,42 @@ template:
 
       - name: "RUTX Multi-VPN Tunnel DE"
         unique_id: rutx_multivpn_tunnel_de
-        icon: mdi:tunnel
+        icon: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {% if data.tunnels.SS_DE | default(data.tunnels.DE) | default(false) %}
+            mdi:flag
+          {% else %}
+            mdi:flag-outline
+          {% endif %}
         state: >-
           {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
-          {{ data.tunnels.SS_DE | default(data.tunnels.DE) | default(false) }}
+          {% if data.tunnels.SS_DE | default(data.tunnels.DE) | default(false) %}An{% else %}Aus{% endif %}
 
       - name: "RUTX Multi-VPN Tunnel CH"
         unique_id: rutx_multivpn_tunnel_ch
-        icon: mdi:tunnel
+        icon: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {% if data.tunnels.SS_CH | default(data.tunnels.CH) | default(false) %}
+            mdi:flag
+          {% else %}
+            mdi:flag-outline
+          {% endif %}
         state: >-
           {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
-          {{ data.tunnels.SS_CH | default(data.tunnels.CH) | default(false) }}
+          {% if data.tunnels.SS_CH | default(data.tunnels.CH) | default(false) %}An{% else %}Aus{% endif %}
 
       - name: "RUTX Multi-VPN Tunnel AT"
         unique_id: rutx_multivpn_tunnel_at
-        icon: mdi:tunnel
+        icon: >-
+          {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
+          {% if data.tunnels.SS_AT | default(data.tunnels.AT) | default(false) %}
+            mdi:flag
+          {% else %}
+            mdi:flag-outline
+          {% endif %}
         state: >-
           {% set data = states('sensor.rutx_multi_vpn_status_raw') | from_json %}
-          {{ data.tunnels.SS_AT | default(data.tunnels.AT) | default(false) }}
+          {% if data.tunnels.SS_AT | default(data.tunnels.AT) | default(false) %}An{% else %}Aus{% endif %}
 
       - name: "RUTX Multi-VPN Streaming Devices"
         unique_id: rutx_multivpn_devices
