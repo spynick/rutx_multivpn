@@ -16,47 +16,56 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 
 ## Architektur
 
-```mermaid
-graph TB
-    subgraph RUTX["RUTX Router"]
-        subgraph VPN["WireGuard Tunnels"]
-            SS_DE["SS_DEWireGuard→ Frankfurt"]
-            SS_CH["SS_CHWireGuard→ Zürich"]
-            SS_AT["SS_ATWireGuard→ Wien"]
-        end
-        
-        VPN --> RT["Routing Tables110 / 111 / 112"]
-        
-        RT --> IPT["iptablesMARK Rules0x10 / 0x11 / 0x12"]
-        
-        IPT --> IPSET["ipset Match"]
-        
-        subgraph IPSET_RULES["IP-Set Regeln"]
-            DE["de_ips: ard.de, zdf.de, ...→ MARK 0x12 → Table 112"]
-            CH["ch_ips: srf.ch, rts.ch, ...→ MARK 0x11 → Table 111"]
-            AT["at_ips: orf.at, atv.at, ...→ MARK 0x10 → Table 110"]
-        end
-        
-        IPSET --> IPSET_RULES
-        
-        CRON["nslookup Cronjob(alle 30min)"] -.-> IPSET
-        
-        IPSET_RULES --> FILTER["Source IP Filter(Streaming Devices)"]
-    end
-    
-    FILTER --> ATV["Apple TV192.168.x.100→ VPN"]
-    FILTER --> FTV["Fire TV192.168.x.101→ VPN"]
-    FILTER --> PC["Normaler PC192.168.x.50→ Internet"]
-    
-    ATV --> VPN
-    FTV --> VPN
-    
-    style RUTX fill:#f0f0f0,stroke:#333,stroke-width:3px
-    style VPN fill:#e3f2fd
-    style IPSET_RULES fill:#fff3e0
-    style ATV fill:#c8e6c9
-    style FTV fill:#c8e6c9
-    style PC fill:#ffcdd2
+```                                RUTX Router
++------------------------------------------------------------------+
+|                                                                   |
+|   +----------------+     +----------------+     +----------------+ |
+|   |   SS_DE        |     |   SS_CH        |     |   SS_AT        | |
+|   |   WireGuard    |     |   WireGuard    |     |   WireGuard    | |
+|   |   -> Frankfurt |     |   -> Zuerich   |     |   -> Wien      | |
+|   +-------+--------+     +-------+--------+     +-------+--------+ |
+|           |                      |                      |          |
+|           +----------------------+----------------------+          |
+|                                  |                                 |
+|                          +------+------+                           |
+|                          | Routing     |                           |
+|                          | Tables      |                           |
+|                          | 110/111/112 |                           |
+|                          +------+------+                           |
+|                                 |                                  |
+|                         +-------+-------+                          |
+|                         | iptables      |                          |
+|                         | MARK Rules    |                          |
+|                         | 0x10/11/12    |                          |
+|                         +-------+-------+                          |
+|                                 |                                  |
+|   +-----------------------------+-----------------------------+    |
+|   |                     ipset Match                           |    |
+|   |  de_ips: ard.de, zdf.de, ...  -> MARK 0x12 -> Table 112  |    |
+|   |  ch_ips: srf.ch, rts.ch, ...  -> MARK 0x11 -> Table 111  |    |
+|   |  at_ips: orf.at, atv.at, ...  -> MARK 0x10 -> Table 110  |    |
+|   +-----------------------------+-----------------------------+    |
+|                                 |                                  |
+|                         +-------+-------+                          |
+|                         |   nslookup    |                          |
+|                         |   Cronjob     |                          |
+|                         |   (alle 30m)  |                          |
+|                         +-------+-------+                          |
+|                                 |                                  |
+|                  +--------------+--------------+                   |
+|                  |    Source IP Filter         |                   |
+|                  |    (Streaming Devices)      |                   |
+|                  +--------------+--------------+                   |
+|                                 |                                  |
++------------------------------------------------------------------+
+                                  |
+                  +---------------+---------------+
+                  |               |               |
+          +-------+------+ +-----+----+ +--------+-------+
+          | Apple TV     | | Fire TV  | | Normaler PC   |
+          | 192.168.x.100| | .x.101   | | .x.50         |
+          | -> VPN       | | -> VPN   | | -> Internet   |
+          +--------------+ +----------+ +---------------+
 ```
 
 ## Datenfluss
