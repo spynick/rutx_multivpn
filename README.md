@@ -16,8 +16,7 @@ DNS-basiertes Multi-Tunnel Split-Tunneling für Streaming auf Teltonika RUTX Rou
 
 ## Architektur
 
-```
-                                RUTX Router
+```                                RUTX Router
 +------------------------------------------------------------------+
 |                                                                   |
 |   +----------------+     +----------------+     +----------------+ |
