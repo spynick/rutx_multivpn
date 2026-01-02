@@ -2,13 +2,17 @@
 
 DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Routern.
 
+**Keine zusaetzlichen Pakete erforderlich** - funktioniert mit Standard-Firmware!
+
 ## Features
 
-- **Automatisches Geo-Routing**: ARD -> DE Tunnel, SRF -> CH Tunnel, ORF -> AT Tunnel
-- **Nur Streaming Devices**: Normale Geraete gehen ins Internet, nur definierte IPs nutzen VPN
+- **Automatisches Geo-Routing**: ARD/ZDF -> DE Tunnel, SRF -> CH Tunnel, ORF -> AT Tunnel
+- **Nur Streaming Devices**: Normale Geraete gehen direkt ins Internet
 - **Mehrere Tunnel gleichzeitig**: WireGuard DE, CH, AT laufen parallel
+- **Firmware-Update sicher**: Keine opkg-Pakete, ueberlebt Updates
+- **Multi-Device Support**: Beliebig viele Streaming-Geraete (Komma, Semikolon oder Leerzeichen getrennt)
 - **Management VPN Schutz**: WG/MGMT/HOME/VPN Interfaces werden NIEMALS angefasst
-- **Home Assistant Integration**: Ein/Aus Schalter, Status, Provisioning Buttons
+- **Home Assistant Integration**: Ein/Aus Schalter, Status mit Flaggen-Emojis, Provisioning Buttons
 
 ## Architektur
 
@@ -38,14 +42,15 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 |                                 |                                  |
 |   +-----------------------------+-----------------------------+    |
 |   |                     ipset Match                           |    |
-|   |  de_ips: ard.de, zdf.de, ...  -> MARK 0x10 -> Table 110  |    |
+|   |  de_ips: ard.de, zdf.de, ...  -> MARK 0x12 -> Table 112  |    |
 |   |  ch_ips: srf.ch, rts.ch, ...  -> MARK 0x11 -> Table 111  |    |
-|   |  at_ips: orf.at, atv.at, ...  -> MARK 0x12 -> Table 112  |    |
+|   |  at_ips: orf.at, atv.at, ...  -> MARK 0x10 -> Table 110  |    |
 |   +-----------------------------+-----------------------------+    |
 |                                 |                                  |
 |                         +-------+-------+                          |
-|                         |   dnsmasq     |                          |
-|                         |   DNS->ipset  |                          |
+|                         |   nslookup    |                          |
+|                         |   Cronjob     |                          |
+|                         |   (alle 30m)  |                          |
 |                         +-------+-------+                          |
 |                                 |                                  |
 |                  +--------------+--------------+                   |
@@ -67,25 +72,26 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 ## Datenfluss
 
 ```
-1. Streaming Device (z.B. Apple TV) macht DNS Request fuer "ard.de"
+1. Cronjob (alle 30 Min) loest Streaming-Domains per nslookup auf
                     |
                     v
-2. dnsmasq loest Domain auf -> fuegt IP zu ipset "de_ips" hinzu
+2. IPs werden in ipsets gespeichert (de_ips, ch_ips, at_ips)
+   mit 24h Timeout
                     |
                     v
-3. Verbindung zu ard.de IP wird aufgebaut
+3. Streaming Device macht Verbindung zu Streaming-IP
                     |
                     v
 4. iptables PREROUTING:
    - Prueft Source IP (ist es Streaming Device?)
    - Prueft Destination IP (ist sie in de_ips/ch_ips/at_ips?)
-   - Setzt MARK (0x10 fuer DE, 0x11 fuer CH, 0x12 fuer AT)
+   - Setzt MARK (0x12 fuer DE, 0x11 fuer CH, 0x10 fuer AT)
                     |
                     v
-5. ip rule: MARK 0x10 -> verwende Routing Table 110
+5. ip rule: MARK 0x12 -> verwende Routing Table 112
                     |
                     v
-6. Routing Table 110: default via SS_DE Interface
+6. Routing Table 112: default via SS_DE Interface
                     |
                     v
 7. Traffic geht durch WireGuard Tunnel nach Frankfurt
@@ -94,25 +100,41 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 8. Surfshark Server in Frankfurt -> ARD Mediathek
 ```
 
-## Nicht-Streaming Device Fluss
+## Voraussetzungen
 
+### Surfshark Account
+
+Du brauchst einen Surfshark Account mit WireGuard-Unterstuetzung:
+
+1. **Surfshark Login**: https://my.surfshark.com/
+2. **Manual Setup** -> **Router** -> **WireGuard**
+3. **Generate Key Pair** (oder vorhandenes verwenden)
+4. **Location waehlen**:
+   - Deutschland (z.B. Frankfurt)
+   - Schweiz (z.B. Zuerich)
+   - Oesterreich (z.B. Wien)
+5. **Config herunterladen**
+
+### WireGuard Config Format
+
+Die heruntergeladene Config sieht so aus:
+
+```ini
+[Interface]
+PrivateKey = DEIN_PRIVATE_KEY
+Address = 10.14.0.2/16
+DNS = 162.252.172.57
+
+[Peer]
+PublicKey = SERVER_PUBLIC_KEY
+AllowedIPs = 0.0.0.0/0
+Endpoint = de-fra.prod.surfshark.com:51820
 ```
-1. Normaler PC macht Request zu "ard.de"
-                    |
-                    v
-2. dnsmasq loest auf -> IP in de_ips (spielt keine Rolle)
-                    |
-                    v
-3. iptables PREROUTING:
-   - Source IP NICHT in Streaming Devices Liste
-   - KEIN MARK gesetzt
-                    |
-                    v
-4. Normale Routing Table (main) wird verwendet
-                    |
-                    v
-5. Traffic geht normal ins Internet (KEIN VPN)
-```
+
+**Wichtig**:
+- Pro Land eine Config herunterladen
+- Alle Configs verwenden denselben Private Key
+- Der Public Key ist pro Server unterschiedlich
 
 ## Installation
 
@@ -123,9 +145,9 @@ DNS-basiertes Multi-Tunnel Split-Tunneling fuer Streaming auf Teltonika RUTX Rou
 cp -r rutx_multivpn /config/packages/
 ```
 
-### 2. WireGuard Configs
+### 2. WireGuard Configs ablegen
 
-Surfshark WireGuard Configs herunterladen und umbenennen:
+Surfshark WireGuard Configs in `profiles/` ablegen:
 
 ```
 profiles/
@@ -134,7 +156,9 @@ profiles/
   wg_AT_surfshark.conf   # Oesterreich (Wien)
 ```
 
-Namenskonvention: `wg_<LAND>_<provider>.conf`
+**Namenskonvention**: `wg_<LAND>_<provider>.conf`
+
+Das Script erkennt das Land automatisch aus dem Dateinamen!
 
 ### 3. Home Assistant configuration.yaml
 
@@ -143,77 +167,96 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-### 4. SSH Key (falls nicht vorhanden)
+### 4. SSH Key einrichten
 
 ```bash
+# SSH Key generieren und auf RUTX kopieren
 ./scripts/setup_ssh_key.sh 192.168.110.1
+```
+
+Oder manuell:
+```bash
+# Auf HA
+ssh-keygen -t rsa -b 4096 -f /config/.ssh/id_rsa -N ""
+
+# Key auf RUTX kopieren
+ssh-copy-id -i /config/.ssh/id_rsa root@192.168.110.1
 ```
 
 ### 5. In Home Assistant
 
-1. RUTX IP eintragen: `input_text.rutx_multivpn_host`
-2. Streaming Device IPs: `input_text.rutx_multivpn_streaming_devices`
-3. Button "Multi-VPN Setup" druecken
-4. Toggle "Multi-VPN Aktiviert" einschalten
+1. **RUTX IP eintragen**: `input_text.rutx_multivpn_host` -> z.B. `192.168.110.1`
+2. **Streaming Device IPs**: `input_text.rutx_multivpn_streaming_devices`
+   - Trennzeichen: Komma, Semikolon oder Leerzeichen
+   - Beispiel: `192.168.110.100, 192.168.110.101, 192.168.110.102`
+3. **Button "Setup" druecken** - Initiales Provisioning
+4. **Toggle "Multi-VPN" einschalten**
+
+## Lovelace Dashboard
+
+Kopiere den Inhalt von `lovelace_card.txt` in dein Dashboard.
+
+**Benoetigt**: `custom:button-card` (via HACS installieren)
+
+Features:
+- Flaggen-Emojis fuer Tunnel-Status
+- IP-Counter pro Land
+- Setup/Refresh/Diagnose/Cleanup Buttons
 
 ## Persistenz
 
-### Firmware Update sicher
-
-Die Konfiguration wird in `/etc/config/multivpn/` gespeichert, was Firmware Updates ueberlebt:
-
-```
-/etc/config/multivpn/
-  config              # Streaming Device IPs
-  dnsmasq-ipset.conf  # DNS->ipset Mapping
-```
-
-Ein Symlink `/etc/dnsmasq.d/multivpn-ipset.conf` verweist auf die persistente Config.
-
-### Autostart nach Reboot
-
-Das Setup Script richtet automatisch einen Eintrag in `/etc/rc.local` ein:
-
-```bash
-# Multi-VPN Autostart
-/root/multivpn/vpn-control.sh on
-```
-
-Das VPN Routing wird nach jedem Reboot automatisch aktiviert.
-
-### Was ueberlebt Reboot NICHT
-
-- **ipsets**: Werden bei `vpn-control.sh on` automatisch neu erstellt
-- **iptables Regeln**: Werden bei `vpn-control.sh on` automatisch gesetzt
-- **ip rules**: Werden bei `vpn-control.sh on` automatisch gesetzt
-
-### Was ueberlebt Reboot
+### Was ueberlebt Firmware-Updates
 
 - WireGuard Interface Konfiguration (UCI)
 - Routing Tabellen in `/etc/iproute2/rt_tables`
-- dnsmasq-full Installation
-- Config in `/etc/config/multivpn/`
+- Scripts in `/root/multivpn/`
+- Config in `/root/multivpn/config`
+- Domain-Listen in `/root/multivpn/domains/`
+- Autostart in `/etc/rc.local`
 
-## Dateien
+### Was bei jedem Start neu erstellt wird
 
+- ipsets (mit IPs aus nslookup)
+- iptables MARK Regeln
+- ip rules fuer Policy Routing
+
+**Keine opkg-Pakete noetig!** Das System verwendet nur Standard-Tools:
+- `nslookup` (BusyBox)
+- `ipset` (Standard in OpenWrt)
+- `iptables` (Standard)
+- `wg` (WireGuard, Standard in RUTX)
+
+## Streaming Domains
+
+Die Domain-Listen in `domains/` enthalten die Streaming-Hostnamen:
+
+### de_streaming.txt
 ```
-rutx_multivpn/
-  rutx_multivpn.yaml          # HA Package
-  profiles/                    # WireGuard Configs
-    wg_DE_surfshark.conf
-    wg_CH_surfshark.conf
-    wg_AT_surfshark.conf
-  domains/                     # Streaming Domain Listen
-    de_streaming.txt
-    ch_streaming.txt
-    at_streaming.txt
-  scripts/
-    rutx_multivpn_cmd.sh       # HA Command Wrapper
-    rutx_multivpn_provision.sh # Initial Setup
-    rutx-multivpn-setup.sh     # RUTX Setup Script
-    rutx-multivpn-cleanup.sh   # Cleanup (mit Schutz!)
-    setup_ssh_key.sh           # SSH Key Generator
+# ARD
+ard.de
+daserste.de
+ardmediathek.de
+# ... und CDN-Server
 ```
+
+### ch_streaming.txt
+```
+# SRF/SRG
+srf.ch
+rts.ch
+play.swissinfo.ch
+# ... und CDN-Server
+```
+
+### at_streaming.txt
+```
+# ORF
+orf.at
+tvthek.orf.at
+# ... und CDN-Server
+```
+
+**Tipp**: Weitere Domains hinzufuegen wenn ein Dienst nicht funktioniert!
 
 ## Home Assistant Entities
 
@@ -223,44 +266,27 @@ rutx_multivpn/
 |--------|-------------|
 | `input_boolean.rutx_multivpn_enabled` | Multi-VPN Ein/Aus |
 | `input_text.rutx_multivpn_host` | RUTX IP Adresse |
-| `input_text.rutx_multivpn_streaming_devices` | Streaming Device IPs |
+| `input_text.rutx_multivpn_streaming_devices` | Streaming Device IPs (Komma/Semikolon/Leerzeichen) |
 
 ### Sensoren
 
 | Entity | Beschreibung |
 |--------|-------------|
-| `sensor.rutx_multi_vpn_aktiv` | Routing aktiv? |
-| `sensor.rutx_multi_vpn_tunnel_de` | DE Tunnel Status |
-| `sensor.rutx_multi_vpn_tunnel_ch` | CH Tunnel Status |
-| `sensor.rutx_multi_vpn_tunnel_at` | AT Tunnel Status |
+| `sensor.rutx_multi_vpn_tunnel_de` | DE Tunnel Status (An/Aus) |
+| `sensor.rutx_multi_vpn_tunnel_ch` | CH Tunnel Status (An/Aus) |
+| `sensor.rutx_multi_vpn_tunnel_at` | AT Tunnel Status (An/Aus) |
 | `sensor.rutx_multi_vpn_de_ips` | Anzahl IPs im DE ipset |
+| `sensor.rutx_multi_vpn_ch_ips` | Anzahl IPs im CH ipset |
+| `sensor.rutx_multi_vpn_at_ips` | Anzahl IPs im AT ipset |
 
 ### Buttons
 
-| Entity | Beschreibung |
+| Button | Beschreibung |
 |--------|-------------|
-| `button.multi_vpn_setup` | Initial Setup ausfuehren |
-| `button.multi_vpn_cleanup` | Konfiguration entfernen |
-| `button.multi_vpn_status_aktualisieren` | Status refresh |
-
-## Sicherheit
-
-### Geschuetzte Management VPNs
-
-Folgende Interface-Namen werden NIEMALS angefasst:
-- `WG` / `wg`
-- `MGMT` / `mgmt`
-- `HOME` / `home`
-- `VPN` / `vpn`
-
-Das Cleanup Script prueft jeden Interface-Namen gegen diese Blacklist.
-
-### Unsere Tunnel
-
-Alle Streaming Tunnel verwenden das Prefix `SS_`:
-- `SS_DE` - Deutschland
-- `SS_CH` - Schweiz
-- `SS_AT` - Oesterreich
+| Setup | Initial Setup ausfuehren |
+| Refresh | Status aktualisieren |
+| Diagnose | Ausfuehrliche Diagnose |
+| Cleanup | Konfiguration entfernen (mit Bestaetigung) |
 
 ## Troubleshooting
 
@@ -279,14 +305,17 @@ ssh root@RUTX_IP "/root/multivpn/vpn-control.sh status"
 ### ipset Inhalt pruefen
 
 ```bash
+# Alle IPs im deutschen ipset anzeigen
 ssh root@RUTX_IP "ipset list de_ips"
+
+# Anzahl IPs
+ssh root@RUTX_IP "ipset list de_ips | grep -c '^[0-9]'"
 ```
 
-### Routing Rules pruefen
+### IP-Update manuell ausfuehren
 
 ```bash
-ssh root@RUTX_IP "ip rule show"
-ssh root@RUTX_IP "ip route show table 110"
+ssh root@RUTX_IP "/root/multivpn/update-ips.sh"
 ```
 
 ### iptables Regeln pruefen
@@ -294,59 +323,134 @@ ssh root@RUTX_IP "ip route show table 110"
 ```bash
 # MARK Regeln (Streaming Device -> ipset match)
 ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep MARK"
-
-# FORWARD Regeln (markierter Traffic -> VPN Tunnel)
-ssh root@RUTX_IP "iptables -L FORWARD -v -n | head -10"
 ```
 
-### dnsmasq Logs
+Erwartete Ausgabe (3 Regeln pro Streaming Device):
+```
+0     0 MARK  all  --  *  *  192.168.110.100  0.0.0.0/0  match-set at_ips dst MARK set 0x10
+0     0 MARK  all  --  *  *  192.168.110.100  0.0.0.0/0  match-set ch_ips dst MARK set 0x11
+0     0 MARK  all  --  *  *  192.168.110.100  0.0.0.0/0  match-set de_ips dst MARK set 0x12
+```
+
+### WireGuard Tunnel pruefen
 
 ```bash
-ssh root@RUTX_IP "logread | grep dnsmasq"
+# Tunnel-Status
+ssh root@RUTX_IP "wg show"
+
+# Transfer-Statistik (zeigt ob Traffic fliesst)
+ssh root@RUTX_IP "wg show SS_DE | grep transfer"
+```
+
+### Routing pruefen
+
+```bash
+# Routing Rules
+ssh root@RUTX_IP "ip rule show"
+
+# Routing Table fuer DE (112)
+ssh root@RUTX_IP "ip route show table 112"
 ```
 
 ### Streaming funktioniert nicht?
 
-1. **Pruefe ob Device mit Router verbunden**:
+1. **Pruefe ob Device in iptables**:
    ```bash
-   ssh root@RUTX_IP "cat /proc/net/arp | grep STREAMING_IP"
+   ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep DEINE_IP"
    ```
 
-2. **Pruefe ob DNS ueber Router laeuft**:
-   Das Streaming Device muss den Router als DNS verwenden!
-
-3. **Pruefe ipset nach DNS-Aufloesung**:
+2. **Pruefe ob Domain aufgeloest wurde**:
    ```bash
-   ssh root@RUTX_IP "nslookup zdf.de 127.0.0.1"
-   ssh root@RUTX_IP "ipset list de_ips"
+   ssh root@RUTX_IP "ipset test de_ips IP_DER_STREAMING_SEITE"
    ```
 
-4. **Pruefe iptables Counter**:
+3. **Pruefe VPN-Traffic**:
    ```bash
-   ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep de_ips"
+   ssh root@RUTX_IP "wg show SS_DE"
    ```
-   Wenn `pkts` = 0, wird kein Traffic markiert.
+   -> `transfer: X received, Y sent` sollte steigen
 
-5. **Pruefe VPN Tunnel Transfer**:
+4. **Manuelles IP-Update**:
    ```bash
-   ssh root@RUTX_IP "wg show SS_DE | grep transfer"
+   ssh root@RUTX_IP "/root/multivpn/update-ips.sh"
    ```
 
 ### VPN Provider blockt Streaming?
 
-Manche Streaming-Dienste (z.B. ORF) erkennen und blocken VPN-Server IPs.
-Loesungen:
+Manche Streaming-Dienste erkennen VPN-Server. Loesungen:
+- Anderen Surfshark Server waehlen
 - Anderen VPN-Provider testen
-- Eigenen VPN-Server in dem Land aufsetzen
-- Residential Proxy verwenden
+- Eigenen VPN-Server aufsetzen
 
-## Parallelnutzung mit rutx_vpn
+## Sicherheit
 
-Dieses Package kann parallel zum bestehenden `rutx_vpn` Package laufen:
+### Geschuetzte Management VPNs
 
-- Eigene Host-Datei: `/config/.rutx_multivpn_host`
-- Eigene Entities: alle mit `rutx_multivpn_` prefixed
-- Eigene Scripts: in `/config/packages/rutx_multivpn/scripts/`
-- Eigene RUTX Interfaces: `SS_*` (Streaming) vs `vpn_*` (OpenVPN)
+Folgende Interface-Namen werden **NIEMALS** angefasst:
+- `WG` / `wg`
+- `MGMT` / `mgmt`
+- `HOME` / `home`
+- `VPN` / `vpn`
 
-**Achtung**: Nicht beide gleichzeitig aktivieren auf demselben RUTX!
+### Streaming Tunnel Prefix
+
+Alle Streaming Tunnel verwenden das Prefix `SS_`:
+- `SS_DE` - Deutschland
+- `SS_CH` - Schweiz
+- `SS_AT` - Oesterreich
+
+## Dateien
+
+```
+rutx_multivpn/
+  README.md                      # Diese Dokumentation
+  rutx_multivpn.yaml             # HA Package
+  lovelace_card.txt              # Dashboard Card YAML
+  profiles/                      # WireGuard Configs (von Surfshark)
+    wg_DE_surfshark.conf
+    wg_CH_surfshark.conf
+    wg_AT_surfshark.conf
+  domains/                       # Streaming Domain Listen
+    de_streaming.txt
+    ch_streaming.txt
+    at_streaming.txt
+  scripts/
+    rutx_multivpn_cmd.sh         # HA Command Wrapper
+    rutx_multivpn_provision.sh   # Initial Setup (von HA)
+    rutx-multivpn-setup.sh       # RUTX Setup Script
+    rutx-multivpn-cleanup.sh     # Cleanup Script
+    update-ips.sh                # IP-Update via nslookup
+    setup_ssh_key.sh             # SSH Key Generator
+```
+
+## FAQ
+
+### Warum kein dnsmasq-full mehr?
+
+Die frueheren Versionen verwendeten `dnsmasq-full` mit ipset-Support. Problem:
+- Muss via `opkg install` installiert werden
+- Geht bei jedem Firmware-Update verloren
+- Router crashte manchmal nach Updates
+
+Die neue Version verwendet `nslookup` + Cronjob - keine zusaetzlichen Pakete noetig!
+
+### Wie oft werden IPs aktualisiert?
+
+Alle 30 Minuten via Cronjob. Die IPs haben ein 24h Timeout im ipset.
+
+### Kann ich mehr als 3 Laender hinzufuegen?
+
+Ja! Dazu musst du:
+1. Neue WireGuard Config: `profiles/wg_XX_surfshark.conf`
+2. Neue Domain-Liste: `domains/xx_streaming.txt`
+3. Setup Script anpassen (neue Routing Table, neues ipset)
+
+### Funktioniert das auch mit anderen VPN-Providern?
+
+Ja, solange sie WireGuard unterstuetzen. Die Config muss nur im richtigen Format sein.
+
+### Mein normales Internet ist langsamer geworden?
+
+Das sollte nicht passieren! Nur Traffic von den Streaming Devices zu den Streaming-IPs geht durch VPN. Pruefe:
+- Ist dein PC in der Streaming Devices Liste? -> Rausnehmen!
+- iptables-Regeln korrekt? -> `iptables -t mangle -L PREROUTING -v -n`
