@@ -34,7 +34,9 @@ case "$1" in
         ;;
     provision)
         RUTX_HOST="$2"
-        STREAMING_DEVICES="$3"
+        shift 2  # Entferne $1 (provision) und $2 (host)
+        # Akzeptiert Komma, Semikolon oder Leerzeichen als Trenner
+        STREAMING_DEVICES=$(echo "$*" | tr ',;' ' ' | xargs)
         export RUTX_HOST STREAMING_DEVICES SSH_KEY
         /config/packages/rutx_multivpn/scripts/rutx_multivpn_provision.sh
         ;;
@@ -50,7 +52,9 @@ case "$1" in
         fi
         ;;
     devices)
-        DEVICES="$2"
+        shift 1  # Entferne $1 (devices)
+        # Akzeptiert Komma, Semikolon oder Leerzeichen als Trenner
+        DEVICES=$(echo "$*" | tr ',;' ' ' | xargs)
         ssh $SSH_OPTS root@$RUTX_HOST "/root/multivpn/manage-devices.sh set $DEVICES"
         ;;
     check)

@@ -24,72 +24,63 @@ cards:
         icon: mdi:vpn
         secondary_info: last-changed
 
-  # Tunnel Status - mit custom:button-card fuer Flaggen
-  # OPTION A: Mit custom:button-card (empfohlen - muss installiert sein via HACS)
+  # Tunnel Status - mit custom:button-card und Emoji-Flaggen
+  # Zeigt Flagge wenn An, rotes X wenn Aus (alles ueber label gesteuert)
   - type: horizontal-stack
     cards:
       - type: custom:button-card
         entity: sensor.rutx_multi_vpn_tunnel_de
         name: Deutschland
-        show_state: true
-        show_icon: true
-        icon: |
+        show_state: false
+        show_icon: false
+        show_label: true
+        label: |
           [[[
-            return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+            return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? '🇩🇪' : '✗';
           ]]]
         styles:
-          icon:
+          label:
+            - font-size: 40px
+            - padding-bottom: 5px
             - color: |
                 [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? '#FFCC00' : 'rgba(255,0,0,0.4)';
-                ]]]
-            - width: 40px
-          card:
-            - background: |
-                [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                  return states['sensor.rutx_multi_vpn_tunnel_de'].state === 'An' ? 'white' : 'rgba(255,80,80,0.5)';
                 ]]]
       - type: custom:button-card
         entity: sensor.rutx_multi_vpn_tunnel_ch
         name: Schweiz
-        show_state: true
-        show_icon: true
-        icon: |
+        show_state: false
+        show_icon: false
+        show_label: true
+        label: |
           [[[
-            return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+            return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? '🇨🇭' : '✗';
           ]]]
         styles:
-          icon:
+          label:
+            - font-size: 40px
+            - padding-bottom: 5px
             - color: |
                 [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? '#FF0000' : 'rgba(255,0,0,0.4)';
-                ]]]
-            - width: 40px
-          card:
-            - background: |
-                [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                  return states['sensor.rutx_multi_vpn_tunnel_ch'].state === 'An' ? 'white' : 'rgba(255,80,80,0.5)';
                 ]]]
       - type: custom:button-card
         entity: sensor.rutx_multi_vpn_tunnel_at
         name: Oesterreich
-        show_state: true
-        show_icon: true
-        icon: |
+        show_state: false
+        show_icon: false
+        show_label: true
+        label: |
           [[[
-            return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? 'mdi:flag' : 'mdi:flag-outline';
+            return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? '🇦🇹' : '✗';
           ]]]
         styles:
-          icon:
+          label:
+            - font-size: 40px
+            - padding-bottom: 5px
             - color: |
                 [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? '#EF3340' : 'rgba(255,0,0,0.4)';
-                ]]]
-            - width: 40px
-          card:
-            - background: |
-                [[[
-                  return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? 'rgba(0,0,0,0.8)' : 'rgba(50,50,50,0.5)';
+                  return states['sensor.rutx_multi_vpn_tunnel_at'].state === 'An' ? 'white' : 'rgba(255,80,80,0.5)';
                 ]]]
 
   # OPTION B: Ohne custom:button-card (Standard glance - weniger huebsch aber funktioniert)
