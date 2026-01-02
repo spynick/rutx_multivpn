@@ -156,6 +156,44 @@ homeassistant:
 3. Button "Multi-VPN Setup" druecken
 4. Toggle "Multi-VPN Aktiviert" einschalten
 
+## Persistenz
+
+### Firmware Update sicher
+
+Die Konfiguration wird in `/etc/config/multivpn/` gespeichert, was Firmware Updates ueberlebt:
+
+```
+/etc/config/multivpn/
+  config              # Streaming Device IPs
+  dnsmasq-ipset.conf  # DNS->ipset Mapping
+```
+
+Ein Symlink `/etc/dnsmasq.d/multivpn-ipset.conf` verweist auf die persistente Config.
+
+### Autostart nach Reboot
+
+Das Setup Script richtet automatisch einen Eintrag in `/etc/rc.local` ein:
+
+```bash
+# Multi-VPN Autostart
+/root/multivpn/vpn-control.sh on
+```
+
+Das VPN Routing wird nach jedem Reboot automatisch aktiviert.
+
+### Was ueberlebt Reboot NICHT
+
+- **ipsets**: Werden bei `vpn-control.sh on` automatisch neu erstellt
+- **iptables Regeln**: Werden bei `vpn-control.sh on` automatisch gesetzt
+- **ip rules**: Werden bei `vpn-control.sh on` automatisch gesetzt
+
+### Was ueberlebt Reboot
+
+- WireGuard Interface Konfiguration (UCI)
+- Routing Tabellen in `/etc/iproute2/rt_tables`
+- dnsmasq-full Installation
+- Config in `/etc/config/multivpn/`
+
 ## Dateien
 
 ```
@@ -251,11 +289,56 @@ ssh root@RUTX_IP "ip rule show"
 ssh root@RUTX_IP "ip route show table 110"
 ```
 
+### iptables Regeln pruefen
+
+```bash
+# MARK Regeln (Streaming Device -> ipset match)
+ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep MARK"
+
+# FORWARD Regeln (markierter Traffic -> VPN Tunnel)
+ssh root@RUTX_IP "iptables -L FORWARD -v -n | head -10"
+```
+
 ### dnsmasq Logs
 
 ```bash
 ssh root@RUTX_IP "logread | grep dnsmasq"
 ```
+
+### Streaming funktioniert nicht?
+
+1. **Pruefe ob Device mit Router verbunden**:
+   ```bash
+   ssh root@RUTX_IP "cat /proc/net/arp | grep STREAMING_IP"
+   ```
+
+2. **Pruefe ob DNS ueber Router laeuft**:
+   Das Streaming Device muss den Router als DNS verwenden!
+
+3. **Pruefe ipset nach DNS-Aufloesung**:
+   ```bash
+   ssh root@RUTX_IP "nslookup zdf.de 127.0.0.1"
+   ssh root@RUTX_IP "ipset list de_ips"
+   ```
+
+4. **Pruefe iptables Counter**:
+   ```bash
+   ssh root@RUTX_IP "iptables -t mangle -L PREROUTING -v -n | grep de_ips"
+   ```
+   Wenn `pkts` = 0, wird kein Traffic markiert.
+
+5. **Pruefe VPN Tunnel Transfer**:
+   ```bash
+   ssh root@RUTX_IP "wg show SS_DE | grep transfer"
+   ```
+
+### VPN Provider blockt Streaming?
+
+Manche Streaming-Dienste (z.B. ORF) erkennen und blocken VPN-Server IPs.
+Loesungen:
+- Anderen VPN-Provider testen
+- Eigenen VPN-Server in dem Land aufsetzen
+- Residential Proxy verwenden
 
 ## Parallelnutzung mit rutx_vpn
 

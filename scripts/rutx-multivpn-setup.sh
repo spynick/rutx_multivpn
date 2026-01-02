@@ -37,8 +37,10 @@ MARK_BASE=16  # 0x10 = 16 dezimal
 
 # Verzeichnisse
 SCRIPT_DIR="/root/multivpn"
-CONFIG_FILE="$SCRIPT_DIR/config"
+CONFIG_DIR="/etc/config/multivpn"
+CONFIG_FILE="$CONFIG_DIR/config"
 DOMAIN_DIR="$SCRIPT_DIR/domains"
+DNSMASQ_IPSET_CONF="$CONFIG_DIR/dnsmasq-ipset.conf"
 
 # Config laden falls vorhanden (wird von Provisioning erstellt)
 if [ -f "$CONFIG_FILE" ]; then
@@ -216,6 +218,7 @@ fi
 log "Erstelle Verzeichnisse..."
 mkdir -p "$SCRIPT_DIR"
 mkdir -p "$DOMAIN_DIR"
+mkdir -p "$CONFIG_DIR"
 
 # =============================================================================
 # ROUTING TABELLEN EINRICHTEN
@@ -270,11 +273,8 @@ done
 
 log "Konfiguriere dnsmasq..."
 
-# dnsmasq.d Verzeichnis erstellen falls nicht vorhanden
-mkdir -p /etc/dnsmasq.d
-
-# dnsmasq ipset Config erstellen
-cat > /etc/dnsmasq.d/multivpn-ipset.conf << 'DNSEOF'
+# dnsmasq ipset Config in /etc/config/multivpn erstellen (ueberlebt Firmware Updates)
+cat > "$DNSMASQ_IPSET_CONF" << 'DNSEOF'
 # Multi-VPN DNS-basiertes Routing
 # Domains werden bei DNS-Aufloesung in ipsets eingetragen
 
@@ -291,7 +291,14 @@ ipset=/orf.at/tvthek.orf.at/servustv.com/atv.at/puls4.com/puls24.at/at_ips
 ipset=/krone.at/krone.tv/oe24.at/oe24.tv/at_ips
 DNSEOF
 
-log "  dnsmasq ipset Config erstellt"
+log "  dnsmasq ipset Config erstellt in $DNSMASQ_IPSET_CONF"
+
+# Symlink in /etc/dnsmasq.d erstellen (nur wenn dnsmasq-full aktiv)
+mkdir -p /etc/dnsmasq.d
+if [ -f /usr/local/usr/sbin/dnsmasq ]; then
+    ln -sf "$DNSMASQ_IPSET_CONF" /etc/dnsmasq.d/multivpn-ipset.conf
+    log "  Symlink /etc/dnsmasq.d/multivpn-ipset.conf erstellt"
+fi
 
 # dnsmasq soll conf-dir benutzen (UCI Methode fuer OpenWRT)
 if ! uci get dhcp.@dnsmasq[0].confdir >/dev/null 2>&1; then
@@ -318,13 +325,15 @@ cat > "$SCRIPT_DIR/vpn-control.sh" << 'VPNEOF'
 #
 
 SCRIPT_DIR="/root/multivpn"
-CONFIG_FILE="$SCRIPT_DIR/config"
+CONFIG_DIR="/etc/config/multivpn"
+CONFIG_FILE="$CONFIG_DIR/config"
 TUNNEL_PREFIX="SS"
 RT_TABLE_BASE=110
 MARK_BASE=16
 
-# Lade Config
+# Lade Config (versuche beide Orte)
 [ -f "$CONFIG_FILE" ] && . "$CONFIG_FILE"
+[ -f "$SCRIPT_DIR/config" ] && . "$SCRIPT_DIR/config"
 
 # STREAMING_DEVICES muss gesetzt sein, sonst Warnung
 if [ -z "$STREAMING_DEVICES" ]; then
@@ -372,12 +381,40 @@ get_mark_for_country() {
     esac
 }
 
+# Berechne Mark dezimal fuer ein Land (fuer iptables)
+get_mark_dec_for_country() {
+    local country="$1"
+    case "$country" in
+        at) echo $((MARK_BASE + 0)) ;;
+        ch) echo $((MARK_BASE + 1)) ;;
+        de) echo $((MARK_BASE + 2)) ;;
+        *)  echo $MARK_BASE ;;
+    esac
+}
+
+# Interface Name fuer Land (uppercase)
+get_iface_for_country() {
+    local country="$1"
+    local country_upper=$(echo "$country" | tr 'a-z' 'A-Z')
+    echo "${TUNNEL_PREFIX}_${country_upper}"
+}
+
 case "$1" in
     on)
         echo "Aktiviere Multi-VPN Routing..."
 
         # Sammle alle Laender
         countries=$(get_all_countries)
+
+        # ipsets erstellen falls nicht vorhanden (ueberleben keinen Reboot!)
+        echo "  Erstelle ipsets..."
+        for country in $countries; do
+            ipset_name="${country}_ips"
+            if ! ipset list "$ipset_name" >/dev/null 2>&1; then
+                ipset create "$ipset_name" hash:ip timeout 3600
+                echo "    ipset $ipset_name erstellt"
+            fi
+        done
 
         # IP Rules aufsetzen
         for country in $countries; do
@@ -414,7 +451,20 @@ case "$1" in
             done
         done
 
-        # iptables Regeln aktivieren
+        # FORWARD Regeln fuer markierten Traffic (VPN Tunnel)
+        echo "  Erstelle FORWARD Regeln..."
+        for country in $countries; do
+            mark_dec=$(get_mark_dec_for_country "$country")
+            iface=$(get_iface_for_country "$country")
+            # Pruefe ob Regel existiert, sonst hinzufuegen
+            if ! iptables -C FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT 2>/dev/null; then
+                iptables -I FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT
+                echo "    FORWARD br-lan -> $iface (mark $mark_dec)"
+            fi
+        done
+
+        # iptables mangle Regeln aktivieren (Source IP + Destination ipset)
+        echo "  Erstelle iptables MARK Regeln..."
         for IP in $STREAMING_DEVICES; do
             for country in $countries; do
                 ipset_name="${country}_ips"
@@ -436,7 +486,14 @@ case "$1" in
         # Sammle alle Laender
         countries=$(get_all_countries)
 
-        # iptables Regeln entfernen
+        # FORWARD Regeln entfernen
+        for country in $countries; do
+            mark_dec=$(get_mark_dec_for_country "$country")
+            iface=$(get_iface_for_country "$country")
+            iptables -D FORWARD -i br-lan -o "$iface" -m mark --mark $mark_dec -j ACCEPT 2>/dev/null || true
+        done
+
+        # iptables mangle Regeln entfernen
         for IP in $STREAMING_DEVICES; do
             for country in $countries; do
                 ipset_name="${country}_ips"
@@ -579,16 +636,6 @@ chmod +x "$SCRIPT_DIR/manage-devices.sh"
 log "  manage-devices.sh erstellt"
 
 # =============================================================================
-# CONFIG DATEI ERSTELLEN
-# =============================================================================
-
-log "Erstelle Config..."
-cat > "$CONFIG_FILE" << CONFEOF
-# Multi-VPN Konfiguration
-STREAMING_DEVICES="$STREAMING_DEVICES"
-CONFEOF
-
-# =============================================================================
 # FIREWALL ZONE FUER VPN (DYNAMISCH)
 # =============================================================================
 
@@ -632,6 +679,54 @@ if ! uci show firewall | grep -q "lan_vpn_forward"; then
 fi
 
 # =============================================================================
+# RC.LOCAL AUTOSTART
+# =============================================================================
+
+log "Konfiguriere Autostart..."
+
+# rc.local fuer automatischen Start nach Reboot
+RC_LOCAL_ENTRY="/root/multivpn/vpn-control.sh on"
+
+if [ -f /etc/rc.local ]; then
+    # Pruefen ob Eintrag bereits existiert
+    if ! grep -q "multivpn/vpn-control.sh" /etc/rc.local; then
+        # Vor exit 0 einfuegen
+        sed -i "/^exit 0/i # Multi-VPN Autostart\n$RC_LOCAL_ENTRY\n" /etc/rc.local
+        log "  rc.local Autostart hinzugefuegt"
+    else
+        log "  rc.local Autostart bereits vorhanden"
+    fi
+else
+    # rc.local erstellen
+    cat > /etc/rc.local << 'RCEOF'
+#!/bin/sh
+# rc.local - Wird nach dem Booten ausgefuehrt
+
+# Multi-VPN Autostart
+/root/multivpn/vpn-control.sh on
+
+exit 0
+RCEOF
+    chmod +x /etc/rc.local
+    log "  rc.local erstellt mit Autostart"
+fi
+
+# =============================================================================
+# CONFIG NACH /etc/config/multivpn KOPIEREN
+# =============================================================================
+
+log "Kopiere Config nach $CONFIG_DIR..."
+
+# Config Datei in persistentes Verzeichnis kopieren
+if [ -n "$STREAMING_DEVICES" ]; then
+    cat > "$CONFIG_FILE" << CONFEOF
+# Multi-VPN Konfiguration (persistent)
+STREAMING_DEVICES="$STREAMING_DEVICES"
+CONFEOF
+    log "  Config nach $CONFIG_FILE geschrieben"
+fi
+
+# =============================================================================
 # FERTIG
 # =============================================================================
 
@@ -644,10 +739,14 @@ for iface in $our_interfaces; do
     log "  - $iface ($country)"
 done
 log ""
+log "Config Verzeichnis: $CONFIG_DIR (ueberlebt Firmware Updates)"
+log ""
 log "Naechste Schritte:"
 log "  1. vpn-control.sh on  - Routing aktivieren"
 log "  2. vpn-control.sh off - Routing deaktivieren"
 log "  3. vpn-control.sh status - Status anzeigen"
+log ""
+log "Autostart: VPN Routing wird nach Reboot automatisch aktiviert"
 log ""
 
 # =============================================================================
