@@ -181,12 +181,15 @@ log() {
 }
 
 # DNS Lookup - gibt alle IPs fuer einen Hostname zurueck
+# Unterstuetzt beide nslookup Formate:
+#   - Standard: "Address: 1.2.3.4"
+#   - BusyBox:  "Address 1: 1.2.3.4"
 resolve_host() {
     local host="$1"
     nslookup "$host" 2>/dev/null | \
-        grep -E "^Address:" | \
+        grep -E "^Address" | \
         tail -n +2 | \
-        awk '{print $2}' | \
+        sed 's/Address[^:]*: *//' | \
         grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'
 }
 
@@ -600,7 +603,7 @@ fi
 
 log "Konfiguriere Cronjob fuer IP-Updates..."
 
-CRON_ENTRY="0 */4 * * * /root/multivpn/update-ips.sh"
+CRON_ENTRY="*/30 * * * * /root/multivpn/update-ips.sh"
 
 # Cronjob hinzufuegen falls nicht vorhanden
 if ! crontab -l 2>/dev/null | grep -q "update-ips.sh"; then
